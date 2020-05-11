@@ -1,10 +1,20 @@
-name: 'Your name here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
+name: Opsworks deploy
+description: Opsworks deploy
+author: aki77
 inputs:
-  myInput:              # change this
-    description: 'input description here'
-    default: 'default value if applicable'
+  stackId:
+    description: "Stack id"
+    required: false
+  appId:
+    description: "App id"
+    required: false
+  region:
+    description: "Region"
+    required: false
+    default: "ap-northeast-1"
+outputs:
+  status:
+    description: Status
 runs:
-  using: 'node12'
-  main: 'dist/index.js'
+  using: "node12"
+  main: "dist/index.js"
