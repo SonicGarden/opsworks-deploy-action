@@ -74,6 +74,7 @@ async function run(): Promise<void> {
     })
 
     core.setOutput('status', status)
+    core.setOutput('deploymentId', DeploymentId)
 
     if (status !== 'successful') {
       throw new Error(`Deploy ${status}!`)

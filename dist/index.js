@@ -3208,6 +3208,7 @@ function run() {
                 DeploymentId
             });
             core.setOutput('status', status);
+            core.setOutput('deploymentId', DeploymentId);
             if (status !== 'successful') {
                 throw new Error(`Deploy ${status}!`);
             }
