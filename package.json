@@ -25,7 +25,7 @@
   "author": "aki77",
   "license": "MIT",
   "dependencies": {
-    "@actions/core": "^1.2.0",
+    "@actions/core": "^1.2.6",
     "aws-sdk": "^2.673.0"
   },
   "devDependencies": {
