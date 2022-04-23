@@ -164,6 +164,13 @@ module.exports = {
 
 /***/ }),
 
+/***/ 16:
+/***/ (function(module) {
+
+module.exports = require("tls");
+
+/***/ }),
+
 /***/ 19:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -212,7 +219,7 @@ module.exports = {
 /***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
 
 var AWS = __webpack_require__(395);
-var STS = __webpack_require__(733);
+var STS = __webpack_require__(106);
 var iniLoader = AWS.util.iniLoader;
 
 var ASSUME_ROLE_DEFAULT_REGION = 'us-east-1';
@@ -540,7 +547,7 @@ AWS.SharedIniFileCredentials = AWS.util.inherit(AWS.Credentials, {
 /***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
 
 var AWS = __webpack_require__(395);
-var STS = __webpack_require__(733);
+var STS = __webpack_require__(106);
 
 /**
  * Represents temporary credentials retrieved from {AWS.STS}. Without any
@@ -687,7 +694,7 @@ module.exports = {"version":"2.0","metadata":{"apiVersion":"2014-06-30","endpoin
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.toCommandValue = void 0;
+exports.toCommandProperties = exports.toCommandValue = void 0;
 /**
  * Sanitizes an input into a string so it can be passed into issueCommand safely
  * @param input input to sanitize into a string
@@ -702,6 +709,26 @@ function toCommandValue(input) {
     return JSON.stringify(input);
 }
 exports.toCommandValue = toCommandValue;
+/**
+ *
+ * @param annotationProperties
+ * @returns The command properties to send with the actual annotation command
+ * See IssueCommandProperties: https://github.com/actions/runner/blob/main/src/Runner.Worker/ActionCommandManager.cs#L646
+ */
+function toCommandProperties(annotationProperties) {
+    if (!Object.keys(annotationProperties).length) {
+        return {};
+    }
+    return {
+        title: annotationProperties.title,
+        file: annotationProperties.file,
+        line: annotationProperties.startLine,
+        endLine: annotationProperties.endLine,
+        col: annotationProperties.startColumn,
+        endColumn: annotationProperties.endColumn
+    };
+}
+exports.toCommandProperties = toCommandProperties;
 //# sourceMappingURL=utils.js.map
 
 /***/ }),
@@ -901,15 +928,27 @@ __webpack_require__(751);
  * AWS.config.credentials = new AWS.EC2MetadataCredentials({
  *   httpOptions: { timeout: 5000 }, // 5 second timeout
  *   maxRetries: 10, // retry 10 times
- *   retryDelayOptions: { base: 200 } // see AWS.Config for information
+ *   retryDelayOptions: { base: 200 }, // see AWS.Config for information
+ *   logger: console // see AWS.Config for information
  * });
+ * ```
  *
  * If your requests are timing out in connecting to the metadata service, such
  * as when testing on a development machine, you can use the connectTimeout
  * option, specified in milliseconds, which also defaults to 1 second.
- * ```
+ *
+ * If the requests failed or returns expired credentials, it will
+ * extend the expiration of current credential, with a warning message. For more
+ * information, please go to:
+ * https://docs.aws.amazon.com/sdkref/latest/guide/feature-static-credentials.html
+ *
+ * @!attribute originalExpiration
+ *   @return [Date] The optional original expiration of the current credential.
+ *   In case of AWS outage, the EC2 metadata will extend expiration of the
+ *   existing credential.
  *
  * @see AWS.Config.retryDelayOptions
+ * @see AWS.Config.logger
  *
  * @!macro nobrowser
  */
@@ -927,7 +966,7 @@ AWS.EC2MetadataCredentials = AWS.util.inherit(AWS.Credentials, {
        options.httpOptions);
 
     this.metadataService = new AWS.MetadataService(options);
-    this.metadata = {};
+    this.logger = options.logger || AWS.config && AWS.config.logger;
   },
 
   /**
@@ -944,6 +983,13 @@ AWS.EC2MetadataCredentials = AWS.util.inherit(AWS.Credentials, {
    * @api private
    */
   defaultMaxRetries: 3,
+
+  /**
+   * The original expiration of the current credential. In case of AWS
+   * outage, the EC2 metadata will extend expiration of the existing
+   * credential.
+   */
+  originalExpiration: undefined,
 
   /**
    * Loads the credentials from the instance metadata service
@@ -967,26 +1013,276 @@ AWS.EC2MetadataCredentials = AWS.util.inherit(AWS.Credentials, {
   load: function load(callback) {
     var self = this;
     self.metadataService.loadCredentials(function(err, creds) {
-      if (!err) {
-        var currentTime = AWS.util.date.getDate();
-        var expireTime = new Date(creds.Expiration);
-        if (expireTime < currentTime) {
-          err = AWS.util.error(
-            new Error('EC2 Instance Metadata Serivce provided expired credentials'),
-            { code: 'EC2MetadataCredentialsProviderFailure' }
-          );
+      if (err) {
+        if (self.hasLoadedCredentials()) {
+          self.extendExpirationIfExpired();
+          callback();
+        } else {
+          callback(err);
+        }
+      } else {
+        self.setCredentials(creds);
+        self.extendExpirationIfExpired();
+        callback();
+      }
+    });
+  },
+
+  /**
+   * Whether this credential has been loaded.
+   * @api private
+   */
+  hasLoadedCredentials: function hasLoadedCredentials() {
+    return this.AccessKeyId && this.secretAccessKey;
+  },
+
+  /**
+   * if expired, extend the expiration by 15 minutes base plus a jitter of 5
+   * minutes range.
+   * @api private
+   */
+  extendExpirationIfExpired: function extendExpirationIfExpired() {
+    if (this.needsRefresh()) {
+      this.originalExpiration = this.originalExpiration || this.expireTime;
+      this.expired = false;
+      var nextTimeout = 15 * 60 + Math.floor(Math.random() * 5 * 60);
+      var currentTime = AWS.util.date.getDate().getTime();
+      this.expireTime = new Date(currentTime + nextTimeout * 1000);
+      // TODO: add doc link;
+      this.logger.warn('Attempting credential expiration extension due to a '
+          + 'credential service availability issue. A refresh of these '
+          + 'credentials will be attempted again at ' + this.expireTime
+          + '\nFor more information, please visit: https://docs.aws.amazon.com/sdkref/latest/guide/feature-static-credentials.html');
+    }
+  },
+
+  /**
+   * Update the credential with new credential responded from EC2 metadata
+   * service.
+   * @api private
+   */
+  setCredentials: function setCredentials(creds) {
+    var currentTime = AWS.util.date.getDate().getTime();
+    var expireTime = new Date(creds.Expiration);
+    this.expired = currentTime >= expireTime ? true : false;
+    this.metadata = creds;
+    this.accessKeyId = creds.AccessKeyId;
+    this.secretAccessKey = creds.SecretAccessKey;
+    this.sessionToken = creds.Token;
+    this.expireTime = expireTime;
+  }
+});
+
+
+/***/ }),
+
+/***/ 106:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+__webpack_require__(234);
+var AWS = __webpack_require__(395);
+var Service = AWS.Service;
+var apiLoader = AWS.apiLoader;
+
+apiLoader.services['sts'] = {};
+AWS.STS = Service.defineService('sts', ['2011-06-15']);
+__webpack_require__(861);
+Object.defineProperty(apiLoader.services['sts'], '2011-06-15', {
+  get: function get() {
+    var model = __webpack_require__(715);
+    model.paginators = __webpack_require__(262).pagination;
+    return model;
+  },
+  enumerable: true,
+  configurable: true
+});
+
+module.exports = AWS.STS;
+
+
+/***/ }),
+
+/***/ 114:
+/***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
+
+var AWS = __webpack_require__(395);
+var path = __webpack_require__(622);
+var crypto = __webpack_require__(417);
+var iniLoader = AWS.util.iniLoader;
+
+/**
+ *  Represents credentials from sso.getRoleCredentials API for
+ * `sso_*` values defined in shared credentials file.
+ *
+ * ## Using SSO credentials
+ *
+ * The credentials file must specify the information below to use sso:
+ *
+ *     [default]
+ *     sso_account_id = 012345678901
+ *     sso_region = us-east-1
+ *     sso_role_name = SampleRole
+ *     sso_start_url = https://d-abc123.awsapps.com/start
+ *
+ * This information will be automatically added to your shared credentials file by running
+ * `aws configure sso`.
+ *
+ * ## Using custom profiles
+ *
+ * The SDK supports loading credentials for separate profiles. This can be done
+ * in two ways:
+ *
+ * 1. Set the `AWS_PROFILE` environment variable in your process prior to
+ *    loading the SDK.
+ * 2. Directly load the AWS.SsoCredentials provider:
+ *
+ * ```javascript
+ * var creds = new AWS.SsoCredentials({profile: 'myprofile'});
+ * AWS.config.credentials = creds;
+ * ```
+ *
+ * @!macro nobrowser
+ */
+AWS.SsoCredentials = AWS.util.inherit(AWS.Credentials, {
+  /**
+   * Creates a new SsoCredentials object.
+   *
+   * @param options [map] a set of options
+   * @option options profile [String] (AWS_PROFILE env var or 'default')
+   *   the name of the profile to load.
+   * @option options filename [String] ('~/.aws/credentials' or defined by
+   *   AWS_SHARED_CREDENTIALS_FILE process env var)
+   *   the filename to use when loading credentials.
+   * @option options callback [Function] (err) Credentials are eagerly loaded
+   *   by the constructor. When the callback is called with no error, the
+   *   credentials have been loaded successfully.
+   */
+  constructor: function SsoCredentials(options) {
+    AWS.Credentials.call(this);
+
+    options = options || {};
+    this.errorCode = 'SsoCredentialsProviderFailure';
+    this.expired = true;
+
+    this.filename = options.filename;
+    this.profile = options.profile || process.env.AWS_PROFILE || AWS.util.defaultProfile;
+    this.service = options.ssoClient;
+    this.get(options.callback || AWS.util.fn.noop);
+  },
+
+  /**
+   * @api private
+   */
+  load: function load(callback) {
+    /**
+     * The time window (15 mins) that SDK will treat the SSO token expires in before the defined expiration date in token.
+     * This is needed because server side may have invalidated the token before the defined expiration date.
+     *
+     * @internal
+     */
+    var EXPIRE_WINDOW_MS = 15 * 60 * 1000;
+    var self = this;
+    try {
+      var profiles = AWS.util.getProfilesFromSharedConfig(iniLoader, this.filename);
+      var profile = profiles[this.profile] || {};
+
+      if (Object.keys(profile).length === 0) {
+        throw AWS.util.error(
+          new Error('Profile ' + this.profile + ' not found'),
+          { code: self.errorCode }
+        );
+      }
+
+      if (!profile.sso_start_url || !profile.sso_account_id || !profile.sso_region || !profile.sso_role_name) {
+        throw AWS.util.error(
+          new Error('Profile ' + this.profile + ' does not have valid SSO credentials. Required parameters "sso_account_id", "sso_region", ' +
+          '"sso_role_name", "sso_start_url". Reference: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html'),
+          { code: self.errorCode }
+        );
+      }
+
+      var hasher = crypto.createHash('sha1');
+      var fileName = hasher.update(profile.sso_start_url).digest('hex') + '.json';
+
+      var cachePath = path.join(
+        iniLoader.getHomeDir(),
+        '.aws',
+        'sso',
+        'cache',
+        fileName
+      );
+      var cacheFile = AWS.util.readFileSync(cachePath);
+      var cacheContent = null;
+      if (cacheFile) {
+        cacheContent = JSON.parse(cacheFile);
+      }
+
+      if (!cacheContent) {
+        throw AWS.util.error(
+          new Error('Cached credentials not found under ' + this.profile + ' profile. Please make sure you log in with aws sso login first'),
+          { code: self.errorCode }
+        );
+      }
+
+      if (!cacheContent.startUrl || !cacheContent.region || !cacheContent.accessToken || !cacheContent.expiresAt) {
+        throw AWS.util.error(
+          new Error('Cached credentials are missing required properties. Try running aws sso login.')
+        );
+      }
+
+      if (new Date(cacheContent.expiresAt).getTime() - Date.now() <= EXPIRE_WINDOW_MS) {
+        throw AWS.util.error(new Error(
+          'The SSO session associated with this profile has expired. To refresh this SSO session run aws sso login with the corresponding profile.'
+        ));
+      }
+
+      if (!self.service || self.service.config.region !== profile.sso_region) {
+        self.service = new AWS.SSO({ region: profile.sso_region });
+      }
+      var request = {
+        accessToken: cacheContent.accessToken,
+        accountId: profile.sso_account_id,
+        roleName: profile.sso_role_name,
+      };
+      self.service.getRoleCredentials(request, function(err, data) {
+        if (err || !data || !data.roleCredentials) {
+          callback(AWS.util.error(
+            err || new Error('Please log in using "aws sso login"'),
+            { code: self.errorCode }
+          ), null);
+        } else if (!data.roleCredentials.accessKeyId || !data.roleCredentials.secretAccessKey || !data.roleCredentials.sessionToken || !data.roleCredentials.expiration) {
+          throw AWS.util.error(new Error(
+            'SSO returns an invalid temporary credential.'
+          ));
         } else {
           self.expired = false;
-          self.metadata = creds;
-          self.accessKeyId = creds.AccessKeyId;
-          self.secretAccessKey = creds.SecretAccessKey;
-          self.sessionToken = creds.Token;
-          self.expireTime = expireTime;
+          self.accessKeyId = data.roleCredentials.accessKeyId;
+          self.secretAccessKey = data.roleCredentials.secretAccessKey;
+          self.sessionToken = data.roleCredentials.sessionToken;
+          self.expireTime = new Date(data.roleCredentials.expiration);
+          callback(null);
         }
-      }
+      });
+    } catch (err) {
       callback(err);
-    });
-  }
+    }
+  },
+
+  /**
+   * Loads the credentials from the AWS SSO process
+   *
+   * @callback callback function(err)
+   *   Called after the AWS SSO process has been executed. When this
+   *   callback is called with no error, it means that the credentials
+   *   information has been loaded into the object (as the `accessKeyId`,
+   *   `secretAccessKey`, and `sessionToken` properties).
+   *   @param err [Error] if an error occurred, this value will be filled
+   * @see get
+   */
+  refresh: function refresh(callback) {
+    iniLoader.clearCachedFiles();
+    this.coalesceRefresh(callback || AWS.util.fn.callback);
+  },
 });
 
 
@@ -1089,6 +1385,278 @@ var crypto = __webpack_require__(417);
 module.exports = function nodeRNG() {
   return crypto.randomBytes(16);
 };
+
+
+/***/ }),
+
+/***/ 141:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+
+var net = __webpack_require__(631);
+var tls = __webpack_require__(16);
+var http = __webpack_require__(605);
+var https = __webpack_require__(211);
+var events = __webpack_require__(614);
+var assert = __webpack_require__(357);
+var util = __webpack_require__(669);
+
+
+exports.httpOverHttp = httpOverHttp;
+exports.httpsOverHttp = httpsOverHttp;
+exports.httpOverHttps = httpOverHttps;
+exports.httpsOverHttps = httpsOverHttps;
+
+
+function httpOverHttp(options) {
+  var agent = new TunnelingAgent(options);
+  agent.request = http.request;
+  return agent;
+}
+
+function httpsOverHttp(options) {
+  var agent = new TunnelingAgent(options);
+  agent.request = http.request;
+  agent.createSocket = createSecureSocket;
+  agent.defaultPort = 443;
+  return agent;
+}
+
+function httpOverHttps(options) {
+  var agent = new TunnelingAgent(options);
+  agent.request = https.request;
+  return agent;
+}
+
+function httpsOverHttps(options) {
+  var agent = new TunnelingAgent(options);
+  agent.request = https.request;
+  agent.createSocket = createSecureSocket;
+  agent.defaultPort = 443;
+  return agent;
+}
+
+
+function TunnelingAgent(options) {
+  var self = this;
+  self.options = options || {};
+  self.proxyOptions = self.options.proxy || {};
+  self.maxSockets = self.options.maxSockets || http.Agent.defaultMaxSockets;
+  self.requests = [];
+  self.sockets = [];
+
+  self.on('free', function onFree(socket, host, port, localAddress) {
+    var options = toOptions(host, port, localAddress);
+    for (var i = 0, len = self.requests.length; i < len; ++i) {
+      var pending = self.requests[i];
+      if (pending.host === options.host && pending.port === options.port) {
+        // Detect the request to connect same origin server,
+        // reuse the connection.
+        self.requests.splice(i, 1);
+        pending.request.onSocket(socket);
+        return;
+      }
+    }
+    socket.destroy();
+    self.removeSocket(socket);
+  });
+}
+util.inherits(TunnelingAgent, events.EventEmitter);
+
+TunnelingAgent.prototype.addRequest = function addRequest(req, host, port, localAddress) {
+  var self = this;
+  var options = mergeOptions({request: req}, self.options, toOptions(host, port, localAddress));
+
+  if (self.sockets.length >= this.maxSockets) {
+    // We are over limit so we'll add it to the queue.
+    self.requests.push(options);
+    return;
+  }
+
+  // If we are under maxSockets create a new one.
+  self.createSocket(options, function(socket) {
+    socket.on('free', onFree);
+    socket.on('close', onCloseOrRemove);
+    socket.on('agentRemove', onCloseOrRemove);
+    req.onSocket(socket);
+
+    function onFree() {
+      self.emit('free', socket, options);
+    }
+
+    function onCloseOrRemove(err) {
+      self.removeSocket(socket);
+      socket.removeListener('free', onFree);
+      socket.removeListener('close', onCloseOrRemove);
+      socket.removeListener('agentRemove', onCloseOrRemove);
+    }
+  });
+};
+
+TunnelingAgent.prototype.createSocket = function createSocket(options, cb) {
+  var self = this;
+  var placeholder = {};
+  self.sockets.push(placeholder);
+
+  var connectOptions = mergeOptions({}, self.proxyOptions, {
+    method: 'CONNECT',
+    path: options.host + ':' + options.port,
+    agent: false,
+    headers: {
+      host: options.host + ':' + options.port
+    }
+  });
+  if (options.localAddress) {
+    connectOptions.localAddress = options.localAddress;
+  }
+  if (connectOptions.proxyAuth) {
+    connectOptions.headers = connectOptions.headers || {};
+    connectOptions.headers['Proxy-Authorization'] = 'Basic ' +
+        new Buffer(connectOptions.proxyAuth).toString('base64');
+  }
+
+  debug('making CONNECT request');
+  var connectReq = self.request(connectOptions);
+  connectReq.useChunkedEncodingByDefault = false; // for v0.6
+  connectReq.once('response', onResponse); // for v0.6
+  connectReq.once('upgrade', onUpgrade);   // for v0.6
+  connectReq.once('connect', onConnect);   // for v0.7 or later
+  connectReq.once('error', onError);
+  connectReq.end();
+
+  function onResponse(res) {
+    // Very hacky. This is necessary to avoid http-parser leaks.
+    res.upgrade = true;
+  }
+
+  function onUpgrade(res, socket, head) {
+    // Hacky.
+    process.nextTick(function() {
+      onConnect(res, socket, head);
+    });
+  }
+
+  function onConnect(res, socket, head) {
+    connectReq.removeAllListeners();
+    socket.removeAllListeners();
+
+    if (res.statusCode !== 200) {
+      debug('tunneling socket could not be established, statusCode=%d',
+        res.statusCode);
+      socket.destroy();
+      var error = new Error('tunneling socket could not be established, ' +
+        'statusCode=' + res.statusCode);
+      error.code = 'ECONNRESET';
+      options.request.emit('error', error);
+      self.removeSocket(placeholder);
+      return;
+    }
+    if (head.length > 0) {
+      debug('got illegal response body from proxy');
+      socket.destroy();
+      var error = new Error('got illegal response body from proxy');
+      error.code = 'ECONNRESET';
+      options.request.emit('error', error);
+      self.removeSocket(placeholder);
+      return;
+    }
+    debug('tunneling connection has established');
+    self.sockets[self.sockets.indexOf(placeholder)] = socket;
+    return cb(socket);
+  }
+
+  function onError(cause) {
+    connectReq.removeAllListeners();
+
+    debug('tunneling socket could not be established, cause=%s\n',
+          cause.message, cause.stack);
+    var error = new Error('tunneling socket could not be established, ' +
+                          'cause=' + cause.message);
+    error.code = 'ECONNRESET';
+    options.request.emit('error', error);
+    self.removeSocket(placeholder);
+  }
+};
+
+TunnelingAgent.prototype.removeSocket = function removeSocket(socket) {
+  var pos = this.sockets.indexOf(socket)
+  if (pos === -1) {
+    return;
+  }
+  this.sockets.splice(pos, 1);
+
+  var pending = this.requests.shift();
+  if (pending) {
+    // If we have pending requests and a socket gets closed a new one
+    // needs to be created to take over in the pool for the one that closed.
+    this.createSocket(pending, function(socket) {
+      pending.request.onSocket(socket);
+    });
+  }
+};
+
+function createSecureSocket(options, cb) {
+  var self = this;
+  TunnelingAgent.prototype.createSocket.call(self, options, function(socket) {
+    var hostHeader = options.request.getHeader('host');
+    var tlsOptions = mergeOptions({}, self.options, {
+      socket: socket,
+      servername: hostHeader ? hostHeader.replace(/:.*$/, '') : options.host
+    });
+
+    // 0 is dummy port for v0.6
+    var secureSocket = tls.connect(0, tlsOptions);
+    self.sockets[self.sockets.indexOf(socket)] = secureSocket;
+    cb(secureSocket);
+  });
+}
+
+
+function toOptions(host, port, localAddress) {
+  if (typeof host === 'string') { // since v0.10
+    return {
+      host: host,
+      port: port,
+      localAddress: localAddress
+    };
+  }
+  return host; // for v0.11 or later
+}
+
+function mergeOptions(target) {
+  for (var i = 1, len = arguments.length; i < len; ++i) {
+    var overrides = arguments[i];
+    if (typeof overrides === 'object') {
+      var keys = Object.keys(overrides);
+      for (var j = 0, keyLen = keys.length; j < keyLen; ++j) {
+        var k = keys[j];
+        if (overrides[k] !== undefined) {
+          target[k] = overrides[k];
+        }
+      }
+    }
+  }
+  return target;
+}
+
+
+var debug;
+if (process.env.NODE_DEBUG && /\btunnel\b/.test(process.env.NODE_DEBUG)) {
+  debug = function() {
+    var args = Array.prototype.slice.call(arguments);
+    if (typeof args[0] === 'string') {
+      args[0] = 'TUNNEL: ' + args[0];
+    } else {
+      args.unshift('TUNNEL:');
+    }
+    console.error.apply(console, args);
+  }
+} else {
+  debug = function() {};
+}
+exports.debug = debug; // for test
 
 
 /***/ }),
@@ -2161,6 +2729,25 @@ module.exports = util;
 
 /***/ }),
 
+/***/ 160:
+/***/ (function(module) {
+
+var ENV_ENDPOINT_NAME = 'AWS_EC2_METADATA_SERVICE_ENDPOINT';
+var CONFIG_ENDPOINT_NAME = 'ec2_metadata_service_endpoint';
+
+var getEndpointConfigOptions = function() {
+  return {
+    environmentVariableSelector: function(env) { return env[ENV_ENDPOINT_NAME]; },
+    configFileSelector: function(profile) { return profile[CONFIG_ENDPOINT_NAME]; },
+    default: undefined,
+  };
+};
+
+module.exports = getEndpointConfigOptions;
+
+
+/***/ }),
+
 /***/ 165:
 /***/ (function(module) {
 
@@ -2192,7 +2779,7 @@ module.exports = apiLoader;
 
 var AWS = __webpack_require__(395);
 var CognitoIdentity = __webpack_require__(214);
-var STS = __webpack_require__(733);
+var STS = __webpack_require__(106);
 
 /**
  * Represents credentials retrieved from STS Web Identity Federation using
@@ -2579,6 +3166,34 @@ AWS.CognitoIdentityCredentials = AWS.util.inherit(AWS.Credentials, {
 
 /***/ }),
 
+/***/ 171:
+/***/ (function(module) {
+
+function isFipsRegion(region) {
+  return typeof region === 'string' && (region.startsWith('fips-') || region.endsWith('-fips'));
+}
+
+function isGlobalRegion(region) {
+  return typeof region === 'string' && ['aws-global', 'aws-us-gov-global'].includes(region);
+}
+
+function getRealRegion(region) {
+  return ['fips-aws-global', 'aws-fips', 'aws-global'].includes(region)
+      ? 'us-east-1'
+      : ['fips-aws-us-gov-global', 'aws-us-gov-global'].includes(region)
+      ? 'us-gov-west-1'
+      : region.replace(/fips-(dkr-|prod-)?|-fips/, '');
+}
+
+module.exports = {
+  isFipsRegion: isFipsRegion,
+  isGlobalRegion: isGlobalRegion,
+  getRealRegion: getRealRegion
+};
+
+
+/***/ }),
+
 /***/ 175:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -2715,7 +3330,7 @@ var PromisesDependency;
  *
  * @!attribute computeChecksums
  *   @return [Boolean] whether to compute checksums for payload bodies when
- *     the service accepts it (currently supported in S3 only).
+ *     the service accepts it (currently supported in S3 and SQS only).
  *
  * @!attribute convertResponseTypes
  *   @return [Boolean] whether types are converted when parsing response data.
@@ -2846,7 +3461,13 @@ var PromisesDependency;
  * @!attribute stsRegionalEndpoints
  *   @return ['legacy'|'regional'] whether to send sts request to global endpoints or
  *     regional endpoints.
- *     Defaults to 'legacy'
+ *     Defaults to 'legacy'.
+ *
+ * @!attribute useFipsEndpoint
+ *   @return [Boolean] Enables FIPS compatible endpoints. Defaults to `false`.
+ *
+ * @!attribute useDualstackEndpoint
+ *   @return [Boolean] Enables IPv6 dualstack endpoint. Defaults to `false`.
  */
 AWS.Config = AWS.util.inherit({
   /**
@@ -3001,6 +3622,10 @@ AWS.Config = AWS.util.inherit({
    * @option options stsRegionalEndpoints ['legacy'|'regional'] whether to send sts request
    *   to global endpoints or regional endpoints.
    *   Defaults to 'legacy'.
+   * @option options useFipsEndpoint [Boolean] Enables FIPS compatible endpoints.
+   *   Defaults to `false`.
+   * @option options useDualstackEndpoint [Boolean] Enables IPv6 dualstack endpoint.
+   *   Defaults to `false`.
    */
   constructor: function Config(options) {
     if (options === undefined) options = {};
@@ -3224,7 +3849,9 @@ AWS.Config = AWS.util.inherit({
     endpointDiscoveryEnabled: undefined,
     endpointCacheSize: 1000,
     hostPrefixEnabled: true,
-    stsRegionalEndpoints: 'legacy'
+    stsRegionalEndpoints: 'legacy',
+    useFipsEndpoint: false,
+    useDualstackEndpoint: false
   },
 
   /**
@@ -3295,7 +3922,11 @@ module.exports = require("querystring");
 
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -3378,7 +4009,9 @@ function run() {
             }
         }
         catch (error) {
-            core.setFailed(error.message);
+            if (error instanceof Error) {
+                core.setFailed(error.message);
+            }
         }
     });
 }
@@ -3507,6 +4140,72 @@ module.exports = AWS.Signers.V2;
 
 /***/ }),
 
+/***/ 226:
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+class BasicCredentialHandler {
+    constructor(username, password) {
+        this.username = username;
+        this.password = password;
+    }
+    prepareRequest(options) {
+        options.headers['Authorization'] =
+            'Basic ' +
+                Buffer.from(this.username + ':' + this.password).toString('base64');
+    }
+    // This handler cannot handle 401
+    canHandleAuthentication(response) {
+        return false;
+    }
+    handleAuthentication(httpClient, requestInfo, objs) {
+        return null;
+    }
+}
+exports.BasicCredentialHandler = BasicCredentialHandler;
+class BearerCredentialHandler {
+    constructor(token) {
+        this.token = token;
+    }
+    // currently implements pre-authorization
+    // TODO: support preAuth = false where it hooks on 401
+    prepareRequest(options) {
+        options.headers['Authorization'] = 'Bearer ' + this.token;
+    }
+    // This handler cannot handle 401
+    canHandleAuthentication(response) {
+        return false;
+    }
+    handleAuthentication(httpClient, requestInfo, objs) {
+        return null;
+    }
+}
+exports.BearerCredentialHandler = BearerCredentialHandler;
+class PersonalAccessTokenCredentialHandler {
+    constructor(token) {
+        this.token = token;
+    }
+    // currently implements pre-authorization
+    // TODO: support preAuth = false where it hooks on 401
+    prepareRequest(options) {
+        options.headers['Authorization'] =
+            'Basic ' + Buffer.from('PAT:' + this.token).toString('base64');
+    }
+    // This handler cannot handle 401
+    canHandleAuthentication(response) {
+        return false;
+    }
+    handleAuthentication(httpClient, requestInfo, objs) {
+        return null;
+    }
+}
+exports.PersonalAccessTokenCredentialHandler = PersonalAccessTokenCredentialHandler;
+
+
+/***/ }),
+
 /***/ 229:
 /***/ (function(module) {
 
@@ -3593,6 +4292,10 @@ module.exports = resolveRegionalEndpointsFlag;
 
 var util = __webpack_require__(153);
 
+var region_utils = __webpack_require__(171);
+var isFipsRegion = region_utils.isFipsRegion;
+var getRealRegion = region_utils.getRealRegion;
+
 util.isBrowser = function() { return false; };
 util.isNode = function() { return true; };
 
@@ -3600,7 +4303,7 @@ util.isNode = function() { return true; };
 util.crypto.lib = __webpack_require__(417);
 util.Buffer = __webpack_require__(293).Buffer;
 util.domain = __webpack_require__(229);
-util.stream = __webpack_require__(413);
+util.stream = __webpack_require__(794);
 util.url = __webpack_require__(414);
 util.querystring = __webpack_require__(191);
 util.environment = 'nodejs';
@@ -3613,6 +4316,33 @@ util.clientSideMonitoring = {
 };
 util.iniLoader = __webpack_require__(892).iniLoader;
 util.getSystemErrorName = __webpack_require__(669).getSystemErrorName;
+
+util.loadConfig = function(options) {
+  var envValue = options.environmentVariableSelector(process.env);
+  if (envValue !== undefined) {
+    return envValue;
+  }
+
+  var configFile = {};
+  try {
+    configFile = util.iniLoader ? util.iniLoader.loadFrom({
+      isConfig: true,
+      filename: process.env[util.sharedConfigFileEnv]
+    }) : {};
+  } catch (e) {}
+  var sharedFileConfig = configFile[
+    process.env.AWS_PROFILE || util.defaultProfile
+  ] || {};
+  var configValue = options.configFileSelector(sharedFileConfig);
+  if (configValue !== undefined) {
+    return configValue;
+  }
+
+  if (typeof options.default === 'function') {
+    return options.default();
+  }
+  return options.default;
+};
 
 var AWS;
 
@@ -3647,6 +4377,7 @@ __webpack_require__(872);
 __webpack_require__(634);
 __webpack_require__(22);
 __webpack_require__(982);
+__webpack_require__(114);
 
 // Setup default chain providers
 // If this changes, please update documentation for
@@ -3655,12 +4386,61 @@ __webpack_require__(982);
 AWS.CredentialProviderChain.defaultProviders = [
   function () { return new AWS.EnvironmentCredentials('AWS'); },
   function () { return new AWS.EnvironmentCredentials('AMAZON'); },
+  function () { return new AWS.SsoCredentials(); },
   function () { return new AWS.SharedIniFileCredentials(); },
   function () { return new AWS.ECSCredentials(); },
   function () { return new AWS.ProcessCredentials(); },
   function () { return new AWS.TokenFileWebIdentityCredentials(); },
   function () { return new AWS.EC2MetadataCredentials(); }
 ];
+
+var getRegion = function() {
+  var env = process.env;
+  var region = env.AWS_REGION || env.AMAZON_REGION;
+  if (env[AWS.util.configOptInEnv]) {
+    var toCheck = [
+      {filename: env[AWS.util.sharedCredentialsFileEnv]},
+      {isConfig: true, filename: env[AWS.util.sharedConfigFileEnv]}
+    ];
+    var iniLoader = AWS.util.iniLoader;
+    while (!region && toCheck.length) {
+      var configFile = {};
+      var fileInfo = toCheck.shift();
+      try {
+        configFile = iniLoader.loadFrom(fileInfo);
+      } catch (err) {
+        if (fileInfo.isConfig) throw err;
+      }
+      var profile = configFile[env.AWS_PROFILE || AWS.util.defaultProfile];
+      region = profile && profile.region;
+    }
+  }
+  return region;
+};
+
+var getBooleanValue = function(value) {
+  return value === 'true' ? true: value === 'false' ? false: undefined;
+};
+
+var USE_FIPS_ENDPOINT_CONFIG_OPTIONS = {
+  environmentVariableSelector: function(env) {
+    return getBooleanValue(env['AWS_USE_FIPS_ENDPOINT']);
+  },
+  configFileSelector: function(profile) {
+    return getBooleanValue(profile['use_fips_endpoint']);
+  },
+  default: false,
+};
+
+var USE_DUALSTACK_ENDPOINT_CONFIG_OPTIONS = {
+  environmentVariableSelector: function(env) {
+    return getBooleanValue(env['AWS_USE_DUALSTACK_ENDPOINT']);
+  },
+  configFileSelector: function(profile) {
+    return getBooleanValue(profile['use_dualstack_endpoint']);
+  },
+  default: false,
+};
 
 // Update configuration keys
 AWS.util.update(AWS.Config.prototype.keys, {
@@ -3682,27 +4462,17 @@ AWS.util.update(AWS.Config.prototype.keys, {
     return process.env.AWSJS_DEBUG ? console : null;
   },
   region: function() {
-    var env = process.env;
-    var region = env.AWS_REGION || env.AMAZON_REGION;
-    if (env[AWS.util.configOptInEnv]) {
-      var toCheck = [
-        {filename: env[AWS.util.sharedCredentialsFileEnv]},
-        {isConfig: true, filename: env[AWS.util.sharedConfigFileEnv]}
-      ];
-      var iniLoader = AWS.util.iniLoader;
-      while (!region && toCheck.length) {
-        var configFile = {};
-        var fileInfo = toCheck.shift();
-        try {
-          configFile = iniLoader.loadFrom(fileInfo);
-        } catch (err) {
-          if (fileInfo.isConfig) throw err;
-        }
-        var profile = configFile[env.AWS_PROFILE || AWS.util.defaultProfile];
-        region = profile && profile.region;
-      }
-    }
-    return region;
+    var region = getRegion();
+    return region ? getRealRegion(region): undefined;
+  },
+  useFipsEndpoint: function() {
+    var region = getRegion();
+    return isFipsRegion(region)
+      ? true
+      : util.loadConfig(USE_FIPS_ENDPOINT_CONFIG_OPTIONS);
+  },
+  useDualstackEndpoint: function() {
+    return util.loadConfig(USE_DUALSTACK_ENDPOINT_CONFIG_OPTIONS);
   }
 });
 
@@ -3743,6 +4513,27 @@ function Paginator(name, paginator) {
  * @api private
  */
 module.exports = Paginator;
+
+
+/***/ }),
+
+/***/ 273:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var EndpointMode = __webpack_require__(587)();
+
+var ENV_ENDPOINT_MODE_NAME = 'AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE';
+var CONFIG_ENDPOINT_MODE_NAME = 'ec2_metadata_service_endpoint_mode';
+
+var getEndpointModeConfigOptions = function() {
+  return {
+    environmentVariableSelector: function(env) { return env[ENV_ENDPOINT_MODE_NAME]; },
+    configFileSelector: function(profile) { return profile[CONFIG_ENDPOINT_MODE_NAME]; },
+    default: EndpointMode.IPv4,
+  };
+};
+
+module.exports = getEndpointModeConfigOptions;
 
 
 /***/ }),
@@ -3919,7 +4710,7 @@ module.exports = {"pagination":{"ListIdentityPools":{"input_token":"NextToken","
 
   var Stream
   try {
-    Stream = __webpack_require__(413).Stream
+    Stream = __webpack_require__(794).Stream
   } catch (ex) {
     Stream = function () {}
   }
@@ -5344,7 +6135,7 @@ module.exports = require("string_decoder");
 /***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
 
 var AWS = __webpack_require__(395);
-var STS = __webpack_require__(733);
+var STS = __webpack_require__(106);
 
 /**
  * Represents credentials retrieved from STS Web Identity Federation support.
@@ -5539,30 +6330,24 @@ function populateBody(req) {
     var params = {};
     var payloadShape = input.members[input.payload];
     params = req.params[input.payload];
-    if (params === undefined) return;
 
     if (payloadShape.type === 'structure') {
-      req.httpRequest.body = builder.build(params, payloadShape);
+      req.httpRequest.body = builder.build(params || {}, payloadShape);
       applyContentTypeHeader(req);
-    } else { // non-JSON payload
+    } else if (params !== undefined) {
+      // non-JSON payload
       req.httpRequest.body = params;
       if (payloadShape.type === 'binary' || payloadShape.isStreaming) {
         applyContentTypeHeader(req, true);
       }
     }
   } else {
-    var body = builder.build(req.params, input);
-    if (body !== '{}' || req.httpRequest.method !== 'GET') { //don't send empty body for GET method
-      req.httpRequest.body = body;
-    }
+    req.httpRequest.body = builder.build(req.params, input);
     applyContentTypeHeader(req);
   }
 }
 
 function applyContentTypeHeader(req, isBinary) {
-  var operation = req.service.api.operations[req.operation];
-  var input = operation.input;
-
   if (!req.httpRequest.headers['Content-Type']) {
     var type = isBinary ? 'binary/octet-stream' : 'application/json';
     req.httpRequest.headers['Content-Type'] = type;
@@ -5572,8 +6357,8 @@ function applyContentTypeHeader(req, isBinary) {
 function buildRequest(req) {
   Rest.buildRequest(req);
 
-  // never send body payload on HEAD/DELETE
-  if (['HEAD', 'DELETE'].indexOf(req.httpRequest.method) < 0) {
+  // never send body payload on GET/HEAD/DELETE
+  if (['GET', 'HEAD', 'DELETE'].indexOf(req.httpRequest.method) < 0) {
     populateBody(req);
   }
 }
@@ -5773,6 +6558,13 @@ module.exports = JsonBuilder;
 
 /***/ }),
 
+/***/ 357:
+/***/ (function(module) {
+
+module.exports = require("assert");
+
+/***/ }),
+
 /***/ 395:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -5798,7 +6590,7 @@ AWS.util.update(AWS, {
   /**
    * @constant
    */
-  VERSION: '2.967.0',
+  VERSION: '2.1120.0',
 
   /**
    * @api private
@@ -5942,9 +6734,10 @@ module.exports = {
 /***/ }),
 
 /***/ 413:
-/***/ (function(module) {
+/***/ (function(module, __unusedexports, __webpack_require__) {
 
-module.exports = require("stream");
+module.exports = __webpack_require__(141);
+
 
 /***/ }),
 
@@ -6828,12 +7621,10 @@ AWS.Request = inherit({
     var region = service.config.region;
     var customUserAgent = service.config.customUserAgent;
 
-    if (service.isGlobalEndpoint) {
-      if (service.signingRegion) {
-        region = service.signingRegion;
-      } else {
-        region = 'us-east-1';
-      }
+    if (service.signingRegion) {
+      region = service.signingRegion;
+    } else if (service.isGlobalEndpoint) {
+      region = 'us-east-1';
     }
 
     this.domain = domain && domain.active;
@@ -7690,12 +8481,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getState = exports.saveState = exports.group = exports.endGroup = exports.startGroup = exports.info = exports.warning = exports.error = exports.debug = exports.isDebug = exports.setFailed = exports.setCommandEcho = exports.setOutput = exports.getBooleanInput = exports.getMultilineInput = exports.getInput = exports.addPath = exports.setSecret = exports.exportVariable = exports.ExitCode = void 0;
+exports.getIDToken = exports.getState = exports.saveState = exports.group = exports.endGroup = exports.startGroup = exports.info = exports.notice = exports.warning = exports.error = exports.debug = exports.isDebug = exports.setFailed = exports.setCommandEcho = exports.setOutput = exports.getBooleanInput = exports.getMultilineInput = exports.getInput = exports.addPath = exports.setSecret = exports.exportVariable = exports.ExitCode = void 0;
 const command_1 = __webpack_require__(431);
 const file_command_1 = __webpack_require__(102);
 const utils_1 = __webpack_require__(82);
 const os = __importStar(__webpack_require__(87));
 const path = __importStar(__webpack_require__(622));
+const oidc_utils_1 = __webpack_require__(742);
 /**
  * The code to exit an action
  */
@@ -7868,19 +8660,30 @@ exports.debug = debug;
 /**
  * Adds an error issue
  * @param message error issue message. Errors will be converted to string via toString()
+ * @param properties optional properties to add to the annotation.
  */
-function error(message) {
-    command_1.issue('error', message instanceof Error ? message.toString() : message);
+function error(message, properties = {}) {
+    command_1.issueCommand('error', utils_1.toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 exports.error = error;
 /**
- * Adds an warning issue
+ * Adds a warning issue
  * @param message warning issue message. Errors will be converted to string via toString()
+ * @param properties optional properties to add to the annotation.
  */
-function warning(message) {
-    command_1.issue('warning', message instanceof Error ? message.toString() : message);
+function warning(message, properties = {}) {
+    command_1.issueCommand('warning', utils_1.toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 exports.warning = warning;
+/**
+ * Adds a notice issue
+ * @param message notice issue message. Errors will be converted to string via toString()
+ * @param properties optional properties to add to the annotation.
+ */
+function notice(message, properties = {}) {
+    command_1.issueCommand('notice', utils_1.toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+}
+exports.notice = notice;
 /**
  * Writes info to log with console.log.
  * @param message info message
@@ -7953,6 +8756,12 @@ function getState(name) {
     return process.env[`STATE_${name}`] || '';
 }
 exports.getState = getState;
+function getIDToken(aud) {
+    return __awaiter(this, void 0, void 0, function* () {
+        return yield oidc_utils_1.OidcClient.getIDToken(aud);
+    });
+}
+exports.getIDToken = getIDToken;
 //# sourceMappingURL=core.js.map
 
 /***/ }),
@@ -8251,6 +9060,7 @@ var regionConfig = __webpack_require__(546);
 
 var inherit = AWS.util.inherit;
 var clientCount = 0;
+var region_utils = __webpack_require__(171);
 
 /**
  * The service class representing an AWS service.
@@ -8272,6 +9082,24 @@ AWS.Service = inherit({
       throw AWS.util.error(new Error(),
         'Service must be constructed with `new\' operator');
     }
+
+    if (config) {
+      if (config.region) {
+        var region = config.region;
+        if (region_utils.isFipsRegion(region)) {
+          config.region = region_utils.getRealRegion(region);
+          config.useFipsEndpoint = true;
+        }
+        if (region_utils.isGlobalRegion(region)) {
+          config.region = region_utils.getRealRegion(region);
+        }
+      }
+      if (typeof config.useDualstack === 'boolean'
+        && typeof config.useDualstackEndpoint !== 'boolean') {
+        config.useDualstackEndpoint = config.useDualstack;
+      }
+    }
+
     var ServiceClass = this.loadServiceClass(config || {});
     if (ServiceClass) {
       var originalConfig = AWS.util.copy(config);
@@ -9168,6 +9996,551 @@ module.exports = {"pagination":{"DescribeApps":{"result_key":"Apps"},"DescribeCo
 
 /***/ }),
 
+/***/ 539:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+const http = __webpack_require__(605);
+const https = __webpack_require__(211);
+const pm = __webpack_require__(950);
+let tunnel;
+var HttpCodes;
+(function (HttpCodes) {
+    HttpCodes[HttpCodes["OK"] = 200] = "OK";
+    HttpCodes[HttpCodes["MultipleChoices"] = 300] = "MultipleChoices";
+    HttpCodes[HttpCodes["MovedPermanently"] = 301] = "MovedPermanently";
+    HttpCodes[HttpCodes["ResourceMoved"] = 302] = "ResourceMoved";
+    HttpCodes[HttpCodes["SeeOther"] = 303] = "SeeOther";
+    HttpCodes[HttpCodes["NotModified"] = 304] = "NotModified";
+    HttpCodes[HttpCodes["UseProxy"] = 305] = "UseProxy";
+    HttpCodes[HttpCodes["SwitchProxy"] = 306] = "SwitchProxy";
+    HttpCodes[HttpCodes["TemporaryRedirect"] = 307] = "TemporaryRedirect";
+    HttpCodes[HttpCodes["PermanentRedirect"] = 308] = "PermanentRedirect";
+    HttpCodes[HttpCodes["BadRequest"] = 400] = "BadRequest";
+    HttpCodes[HttpCodes["Unauthorized"] = 401] = "Unauthorized";
+    HttpCodes[HttpCodes["PaymentRequired"] = 402] = "PaymentRequired";
+    HttpCodes[HttpCodes["Forbidden"] = 403] = "Forbidden";
+    HttpCodes[HttpCodes["NotFound"] = 404] = "NotFound";
+    HttpCodes[HttpCodes["MethodNotAllowed"] = 405] = "MethodNotAllowed";
+    HttpCodes[HttpCodes["NotAcceptable"] = 406] = "NotAcceptable";
+    HttpCodes[HttpCodes["ProxyAuthenticationRequired"] = 407] = "ProxyAuthenticationRequired";
+    HttpCodes[HttpCodes["RequestTimeout"] = 408] = "RequestTimeout";
+    HttpCodes[HttpCodes["Conflict"] = 409] = "Conflict";
+    HttpCodes[HttpCodes["Gone"] = 410] = "Gone";
+    HttpCodes[HttpCodes["TooManyRequests"] = 429] = "TooManyRequests";
+    HttpCodes[HttpCodes["InternalServerError"] = 500] = "InternalServerError";
+    HttpCodes[HttpCodes["NotImplemented"] = 501] = "NotImplemented";
+    HttpCodes[HttpCodes["BadGateway"] = 502] = "BadGateway";
+    HttpCodes[HttpCodes["ServiceUnavailable"] = 503] = "ServiceUnavailable";
+    HttpCodes[HttpCodes["GatewayTimeout"] = 504] = "GatewayTimeout";
+})(HttpCodes = exports.HttpCodes || (exports.HttpCodes = {}));
+var Headers;
+(function (Headers) {
+    Headers["Accept"] = "accept";
+    Headers["ContentType"] = "content-type";
+})(Headers = exports.Headers || (exports.Headers = {}));
+var MediaTypes;
+(function (MediaTypes) {
+    MediaTypes["ApplicationJson"] = "application/json";
+})(MediaTypes = exports.MediaTypes || (exports.MediaTypes = {}));
+/**
+ * Returns the proxy URL, depending upon the supplied url and proxy environment variables.
+ * @param serverUrl  The server URL where the request will be sent. For example, https://api.github.com
+ */
+function getProxyUrl(serverUrl) {
+    let proxyUrl = pm.getProxyUrl(new URL(serverUrl));
+    return proxyUrl ? proxyUrl.href : '';
+}
+exports.getProxyUrl = getProxyUrl;
+const HttpRedirectCodes = [
+    HttpCodes.MovedPermanently,
+    HttpCodes.ResourceMoved,
+    HttpCodes.SeeOther,
+    HttpCodes.TemporaryRedirect,
+    HttpCodes.PermanentRedirect
+];
+const HttpResponseRetryCodes = [
+    HttpCodes.BadGateway,
+    HttpCodes.ServiceUnavailable,
+    HttpCodes.GatewayTimeout
+];
+const RetryableHttpVerbs = ['OPTIONS', 'GET', 'DELETE', 'HEAD'];
+const ExponentialBackoffCeiling = 10;
+const ExponentialBackoffTimeSlice = 5;
+class HttpClientError extends Error {
+    constructor(message, statusCode) {
+        super(message);
+        this.name = 'HttpClientError';
+        this.statusCode = statusCode;
+        Object.setPrototypeOf(this, HttpClientError.prototype);
+    }
+}
+exports.HttpClientError = HttpClientError;
+class HttpClientResponse {
+    constructor(message) {
+        this.message = message;
+    }
+    readBody() {
+        return new Promise(async (resolve, reject) => {
+            let output = Buffer.alloc(0);
+            this.message.on('data', (chunk) => {
+                output = Buffer.concat([output, chunk]);
+            });
+            this.message.on('end', () => {
+                resolve(output.toString());
+            });
+        });
+    }
+}
+exports.HttpClientResponse = HttpClientResponse;
+function isHttps(requestUrl) {
+    let parsedUrl = new URL(requestUrl);
+    return parsedUrl.protocol === 'https:';
+}
+exports.isHttps = isHttps;
+class HttpClient {
+    constructor(userAgent, handlers, requestOptions) {
+        this._ignoreSslError = false;
+        this._allowRedirects = true;
+        this._allowRedirectDowngrade = false;
+        this._maxRedirects = 50;
+        this._allowRetries = false;
+        this._maxRetries = 1;
+        this._keepAlive = false;
+        this._disposed = false;
+        this.userAgent = userAgent;
+        this.handlers = handlers || [];
+        this.requestOptions = requestOptions;
+        if (requestOptions) {
+            if (requestOptions.ignoreSslError != null) {
+                this._ignoreSslError = requestOptions.ignoreSslError;
+            }
+            this._socketTimeout = requestOptions.socketTimeout;
+            if (requestOptions.allowRedirects != null) {
+                this._allowRedirects = requestOptions.allowRedirects;
+            }
+            if (requestOptions.allowRedirectDowngrade != null) {
+                this._allowRedirectDowngrade = requestOptions.allowRedirectDowngrade;
+            }
+            if (requestOptions.maxRedirects != null) {
+                this._maxRedirects = Math.max(requestOptions.maxRedirects, 0);
+            }
+            if (requestOptions.keepAlive != null) {
+                this._keepAlive = requestOptions.keepAlive;
+            }
+            if (requestOptions.allowRetries != null) {
+                this._allowRetries = requestOptions.allowRetries;
+            }
+            if (requestOptions.maxRetries != null) {
+                this._maxRetries = requestOptions.maxRetries;
+            }
+        }
+    }
+    options(requestUrl, additionalHeaders) {
+        return this.request('OPTIONS', requestUrl, null, additionalHeaders || {});
+    }
+    get(requestUrl, additionalHeaders) {
+        return this.request('GET', requestUrl, null, additionalHeaders || {});
+    }
+    del(requestUrl, additionalHeaders) {
+        return this.request('DELETE', requestUrl, null, additionalHeaders || {});
+    }
+    post(requestUrl, data, additionalHeaders) {
+        return this.request('POST', requestUrl, data, additionalHeaders || {});
+    }
+    patch(requestUrl, data, additionalHeaders) {
+        return this.request('PATCH', requestUrl, data, additionalHeaders || {});
+    }
+    put(requestUrl, data, additionalHeaders) {
+        return this.request('PUT', requestUrl, data, additionalHeaders || {});
+    }
+    head(requestUrl, additionalHeaders) {
+        return this.request('HEAD', requestUrl, null, additionalHeaders || {});
+    }
+    sendStream(verb, requestUrl, stream, additionalHeaders) {
+        return this.request(verb, requestUrl, stream, additionalHeaders);
+    }
+    /**
+     * Gets a typed object from an endpoint
+     * Be aware that not found returns a null.  Other errors (4xx, 5xx) reject the promise
+     */
+    async getJson(requestUrl, additionalHeaders = {}) {
+        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
+        let res = await this.get(requestUrl, additionalHeaders);
+        return this._processResponse(res, this.requestOptions);
+    }
+    async postJson(requestUrl, obj, additionalHeaders = {}) {
+        let data = JSON.stringify(obj, null, 2);
+        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
+        additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.ContentType, MediaTypes.ApplicationJson);
+        let res = await this.post(requestUrl, data, additionalHeaders);
+        return this._processResponse(res, this.requestOptions);
+    }
+    async putJson(requestUrl, obj, additionalHeaders = {}) {
+        let data = JSON.stringify(obj, null, 2);
+        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
+        additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.ContentType, MediaTypes.ApplicationJson);
+        let res = await this.put(requestUrl, data, additionalHeaders);
+        return this._processResponse(res, this.requestOptions);
+    }
+    async patchJson(requestUrl, obj, additionalHeaders = {}) {
+        let data = JSON.stringify(obj, null, 2);
+        additionalHeaders[Headers.Accept] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.Accept, MediaTypes.ApplicationJson);
+        additionalHeaders[Headers.ContentType] = this._getExistingOrDefaultHeader(additionalHeaders, Headers.ContentType, MediaTypes.ApplicationJson);
+        let res = await this.patch(requestUrl, data, additionalHeaders);
+        return this._processResponse(res, this.requestOptions);
+    }
+    /**
+     * Makes a raw http request.
+     * All other methods such as get, post, patch, and request ultimately call this.
+     * Prefer get, del, post and patch
+     */
+    async request(verb, requestUrl, data, headers) {
+        if (this._disposed) {
+            throw new Error('Client has already been disposed.');
+        }
+        let parsedUrl = new URL(requestUrl);
+        let info = this._prepareRequest(verb, parsedUrl, headers);
+        // Only perform retries on reads since writes may not be idempotent.
+        let maxTries = this._allowRetries && RetryableHttpVerbs.indexOf(verb) != -1
+            ? this._maxRetries + 1
+            : 1;
+        let numTries = 0;
+        let response;
+        while (numTries < maxTries) {
+            response = await this.requestRaw(info, data);
+            // Check if it's an authentication challenge
+            if (response &&
+                response.message &&
+                response.message.statusCode === HttpCodes.Unauthorized) {
+                let authenticationHandler;
+                for (let i = 0; i < this.handlers.length; i++) {
+                    if (this.handlers[i].canHandleAuthentication(response)) {
+                        authenticationHandler = this.handlers[i];
+                        break;
+                    }
+                }
+                if (authenticationHandler) {
+                    return authenticationHandler.handleAuthentication(this, info, data);
+                }
+                else {
+                    // We have received an unauthorized response but have no handlers to handle it.
+                    // Let the response return to the caller.
+                    return response;
+                }
+            }
+            let redirectsRemaining = this._maxRedirects;
+            while (HttpRedirectCodes.indexOf(response.message.statusCode) != -1 &&
+                this._allowRedirects &&
+                redirectsRemaining > 0) {
+                const redirectUrl = response.message.headers['location'];
+                if (!redirectUrl) {
+                    // if there's no location to redirect to, we won't
+                    break;
+                }
+                let parsedRedirectUrl = new URL(redirectUrl);
+                if (parsedUrl.protocol == 'https:' &&
+                    parsedUrl.protocol != parsedRedirectUrl.protocol &&
+                    !this._allowRedirectDowngrade) {
+                    throw new Error('Redirect from HTTPS to HTTP protocol. This downgrade is not allowed for security reasons. If you want to allow this behavior, set the allowRedirectDowngrade option to true.');
+                }
+                // we need to finish reading the response before reassigning response
+                // which will leak the open socket.
+                await response.readBody();
+                // strip authorization header if redirected to a different hostname
+                if (parsedRedirectUrl.hostname !== parsedUrl.hostname) {
+                    for (let header in headers) {
+                        // header names are case insensitive
+                        if (header.toLowerCase() === 'authorization') {
+                            delete headers[header];
+                        }
+                    }
+                }
+                // let's make the request with the new redirectUrl
+                info = this._prepareRequest(verb, parsedRedirectUrl, headers);
+                response = await this.requestRaw(info, data);
+                redirectsRemaining--;
+            }
+            if (HttpResponseRetryCodes.indexOf(response.message.statusCode) == -1) {
+                // If not a retry code, return immediately instead of retrying
+                return response;
+            }
+            numTries += 1;
+            if (numTries < maxTries) {
+                await response.readBody();
+                await this._performExponentialBackoff(numTries);
+            }
+        }
+        return response;
+    }
+    /**
+     * Needs to be called if keepAlive is set to true in request options.
+     */
+    dispose() {
+        if (this._agent) {
+            this._agent.destroy();
+        }
+        this._disposed = true;
+    }
+    /**
+     * Raw request.
+     * @param info
+     * @param data
+     */
+    requestRaw(info, data) {
+        return new Promise((resolve, reject) => {
+            let callbackForResult = function (err, res) {
+                if (err) {
+                    reject(err);
+                }
+                resolve(res);
+            };
+            this.requestRawWithCallback(info, data, callbackForResult);
+        });
+    }
+    /**
+     * Raw request with callback.
+     * @param info
+     * @param data
+     * @param onResult
+     */
+    requestRawWithCallback(info, data, onResult) {
+        let socket;
+        if (typeof data === 'string') {
+            info.options.headers['Content-Length'] = Buffer.byteLength(data, 'utf8');
+        }
+        let callbackCalled = false;
+        let handleResult = (err, res) => {
+            if (!callbackCalled) {
+                callbackCalled = true;
+                onResult(err, res);
+            }
+        };
+        let req = info.httpModule.request(info.options, (msg) => {
+            let res = new HttpClientResponse(msg);
+            handleResult(null, res);
+        });
+        req.on('socket', sock => {
+            socket = sock;
+        });
+        // If we ever get disconnected, we want the socket to timeout eventually
+        req.setTimeout(this._socketTimeout || 3 * 60000, () => {
+            if (socket) {
+                socket.end();
+            }
+            handleResult(new Error('Request timeout: ' + info.options.path), null);
+        });
+        req.on('error', function (err) {
+            // err has statusCode property
+            // res should have headers
+            handleResult(err, null);
+        });
+        if (data && typeof data === 'string') {
+            req.write(data, 'utf8');
+        }
+        if (data && typeof data !== 'string') {
+            data.on('close', function () {
+                req.end();
+            });
+            data.pipe(req);
+        }
+        else {
+            req.end();
+        }
+    }
+    /**
+     * Gets an http agent. This function is useful when you need an http agent that handles
+     * routing through a proxy server - depending upon the url and proxy environment variables.
+     * @param serverUrl  The server URL where the request will be sent. For example, https://api.github.com
+     */
+    getAgent(serverUrl) {
+        let parsedUrl = new URL(serverUrl);
+        return this._getAgent(parsedUrl);
+    }
+    _prepareRequest(method, requestUrl, headers) {
+        const info = {};
+        info.parsedUrl = requestUrl;
+        const usingSsl = info.parsedUrl.protocol === 'https:';
+        info.httpModule = usingSsl ? https : http;
+        const defaultPort = usingSsl ? 443 : 80;
+        info.options = {};
+        info.options.host = info.parsedUrl.hostname;
+        info.options.port = info.parsedUrl.port
+            ? parseInt(info.parsedUrl.port)
+            : defaultPort;
+        info.options.path =
+            (info.parsedUrl.pathname || '') + (info.parsedUrl.search || '');
+        info.options.method = method;
+        info.options.headers = this._mergeHeaders(headers);
+        if (this.userAgent != null) {
+            info.options.headers['user-agent'] = this.userAgent;
+        }
+        info.options.agent = this._getAgent(info.parsedUrl);
+        // gives handlers an opportunity to participate
+        if (this.handlers) {
+            this.handlers.forEach(handler => {
+                handler.prepareRequest(info.options);
+            });
+        }
+        return info;
+    }
+    _mergeHeaders(headers) {
+        const lowercaseKeys = obj => Object.keys(obj).reduce((c, k) => ((c[k.toLowerCase()] = obj[k]), c), {});
+        if (this.requestOptions && this.requestOptions.headers) {
+            return Object.assign({}, lowercaseKeys(this.requestOptions.headers), lowercaseKeys(headers));
+        }
+        return lowercaseKeys(headers || {});
+    }
+    _getExistingOrDefaultHeader(additionalHeaders, header, _default) {
+        const lowercaseKeys = obj => Object.keys(obj).reduce((c, k) => ((c[k.toLowerCase()] = obj[k]), c), {});
+        let clientHeader;
+        if (this.requestOptions && this.requestOptions.headers) {
+            clientHeader = lowercaseKeys(this.requestOptions.headers)[header];
+        }
+        return additionalHeaders[header] || clientHeader || _default;
+    }
+    _getAgent(parsedUrl) {
+        let agent;
+        let proxyUrl = pm.getProxyUrl(parsedUrl);
+        let useProxy = proxyUrl && proxyUrl.hostname;
+        if (this._keepAlive && useProxy) {
+            agent = this._proxyAgent;
+        }
+        if (this._keepAlive && !useProxy) {
+            agent = this._agent;
+        }
+        // if agent is already assigned use that agent.
+        if (!!agent) {
+            return agent;
+        }
+        const usingSsl = parsedUrl.protocol === 'https:';
+        let maxSockets = 100;
+        if (!!this.requestOptions) {
+            maxSockets = this.requestOptions.maxSockets || http.globalAgent.maxSockets;
+        }
+        if (useProxy) {
+            // If using proxy, need tunnel
+            if (!tunnel) {
+                tunnel = __webpack_require__(413);
+            }
+            const agentOptions = {
+                maxSockets: maxSockets,
+                keepAlive: this._keepAlive,
+                proxy: {
+                    ...((proxyUrl.username || proxyUrl.password) && {
+                        proxyAuth: `${proxyUrl.username}:${proxyUrl.password}`
+                    }),
+                    host: proxyUrl.hostname,
+                    port: proxyUrl.port
+                }
+            };
+            let tunnelAgent;
+            const overHttps = proxyUrl.protocol === 'https:';
+            if (usingSsl) {
+                tunnelAgent = overHttps ? tunnel.httpsOverHttps : tunnel.httpsOverHttp;
+            }
+            else {
+                tunnelAgent = overHttps ? tunnel.httpOverHttps : tunnel.httpOverHttp;
+            }
+            agent = tunnelAgent(agentOptions);
+            this._proxyAgent = agent;
+        }
+        // if reusing agent across request and tunneling agent isn't assigned create a new agent
+        if (this._keepAlive && !agent) {
+            const options = { keepAlive: this._keepAlive, maxSockets: maxSockets };
+            agent = usingSsl ? new https.Agent(options) : new http.Agent(options);
+            this._agent = agent;
+        }
+        // if not using private agent and tunnel agent isn't setup then use global agent
+        if (!agent) {
+            agent = usingSsl ? https.globalAgent : http.globalAgent;
+        }
+        if (usingSsl && this._ignoreSslError) {
+            // we don't want to set NODE_TLS_REJECT_UNAUTHORIZED=0 since that will affect request for entire process
+            // http.RequestOptions doesn't expose a way to modify RequestOptions.agent.options
+            // we have to cast it to any and change it directly
+            agent.options = Object.assign(agent.options || {}, {
+                rejectUnauthorized: false
+            });
+        }
+        return agent;
+    }
+    _performExponentialBackoff(retryNumber) {
+        retryNumber = Math.min(ExponentialBackoffCeiling, retryNumber);
+        const ms = ExponentialBackoffTimeSlice * Math.pow(2, retryNumber);
+        return new Promise(resolve => setTimeout(() => resolve(), ms));
+    }
+    static dateTimeDeserializer(key, value) {
+        if (typeof value === 'string') {
+            let a = new Date(value);
+            if (!isNaN(a.valueOf())) {
+                return a;
+            }
+        }
+        return value;
+    }
+    async _processResponse(res, options) {
+        return new Promise(async (resolve, reject) => {
+            const statusCode = res.message.statusCode;
+            const response = {
+                statusCode: statusCode,
+                result: null,
+                headers: {}
+            };
+            // not found leads to null obj returned
+            if (statusCode == HttpCodes.NotFound) {
+                resolve(response);
+            }
+            let obj;
+            let contents;
+            // get the result from the body
+            try {
+                contents = await res.readBody();
+                if (contents && contents.length > 0) {
+                    if (options && options.deserializeDates) {
+                        obj = JSON.parse(contents, HttpClient.dateTimeDeserializer);
+                    }
+                    else {
+                        obj = JSON.parse(contents);
+                    }
+                    response.result = obj;
+                }
+                response.headers = res.message.headers;
+            }
+            catch (err) {
+                // Invalid resource (contents not json);  leaving result obj null
+            }
+            // note that 3xx redirects are handled by the http layer.
+            if (statusCode > 299) {
+                let msg;
+                // if exception/error in body, attempt to get better error
+                if (obj && obj.message) {
+                    msg = obj.message;
+                }
+                else if (contents && contents.length > 0) {
+                    // it may be the case that the exception is in the body message as string
+                    msg = contents;
+                }
+                else {
+                    msg = 'Failed request: (' + statusCode + ')';
+                }
+                let err = new HttpClientError(msg, statusCode);
+                err.result = response.result;
+                reject(err);
+            }
+            else {
+                resolve(response);
+            }
+        });
+    }
+}
+exports.HttpClient = HttpClient;
+
+
+/***/ }),
+
 /***/ 542:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -9198,7 +10571,7 @@ module.exports = AWS.OpsWorks;
 /***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
 
 var AWS = __webpack_require__(395);
-var STS = __webpack_require__(733);
+var STS = __webpack_require__(106);
 
 /**
  * Represents temporary credentials retrieved from {AWS.STS}. Without any
@@ -9409,7 +10782,6 @@ var regionConfig = __webpack_require__(572);
 
 function generateRegionPrefix(region) {
   if (!region) return null;
-
   var parts = region.split('-');
   if (parts.length < 3) return null;
   return parts.slice(0, parts.length - 2).join('-') + '-*';
@@ -9443,23 +10815,24 @@ function applyConfig(service, config) {
 
 function configureEndpoint(service) {
   var keys = derivedKeys(service);
+  var useFipsEndpoint = service.config.useFipsEndpoint;
+  var useDualstackEndpoint = service.config.useDualstackEndpoint;
   for (var i = 0; i < keys.length; i++) {
     var key = keys[i];
     if (!key) continue;
 
-    if (Object.prototype.hasOwnProperty.call(regionConfig.rules, key)) {
-      var config = regionConfig.rules[key];
+    var rules = useFipsEndpoint
+      ? useDualstackEndpoint
+        ? regionConfig.dualstackFipsRules
+        : regionConfig.fipsRules
+      : useDualstackEndpoint
+      ? regionConfig.dualstackRules
+      : regionConfig.rules;
+
+    if (Object.prototype.hasOwnProperty.call(rules, key)) {
+      var config = rules[key];
       if (typeof config === 'string') {
         config = regionConfig.patterns[config];
-      }
-
-      // set dualstack endpoint
-      if (service.config.useDualstack && util.isDualstackAvailable(service)) {
-        config = util.copy(config);
-        config.endpoint = config.endpoint.replace(
-          /{service}\.({region}\.)?/,
-          '{service}.dualstack.{region}.'
-        );
       }
 
       // set global endpoint
@@ -9501,7 +10874,7 @@ function getEndpointSuffix(region) {
  */
 module.exports = {
   configureEndpoint: configureEndpoint,
-  getEndpointSuffix: getEndpointSuffix
+  getEndpointSuffix: getEndpointSuffix,
 };
 
 
@@ -9597,7 +10970,7 @@ module.exports = AWS.Signers.V3Https;
 /***/ 572:
 /***/ (function(module) {
 
-module.exports = {"rules":{"*/*":{"endpoint":"{service}.{region}.amazonaws.com"},"cn-*/*":{"endpoint":"{service}.{region}.amazonaws.com.cn"},"us-iso-*/*":{"endpoint":"{service}.{region}.c2s.ic.gov"},"us-isob-*/*":{"endpoint":"{service}.{region}.sc2s.sgov.gov"},"*/budgets":"globalSSL","*/cloudfront":"globalSSL","*/sts":"globalSSL","*/importexport":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2","globalEndpoint":true},"*/route53":"globalSSL","cn-*/route53":{"endpoint":"{service}.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-northwest-1"},"us-gov-*/route53":"globalGovCloud","*/waf":"globalSSL","*/iam":"globalSSL","cn-*/iam":{"endpoint":"{service}.cn-north-1.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-north-1"},"us-gov-*/iam":"globalGovCloud","us-gov-*/sts":{"endpoint":"{service}.{region}.amazonaws.com"},"us-gov-west-1/s3":"s3signature","us-west-1/s3":"s3signature","us-west-2/s3":"s3signature","eu-west-1/s3":"s3signature","ap-southeast-1/s3":"s3signature","ap-southeast-2/s3":"s3signature","ap-northeast-1/s3":"s3signature","sa-east-1/s3":"s3signature","us-east-1/s3":{"endpoint":"{service}.amazonaws.com","signatureVersion":"s3"},"us-east-1/sdb":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2"},"*/sdb":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"v2"}},"patterns":{"globalSSL":{"endpoint":"https://{service}.amazonaws.com","globalEndpoint":true,"signingRegion":"us-east-1"},"globalGovCloud":{"endpoint":"{service}.us-gov.amazonaws.com","globalEndpoint":true,"signingRegion":"us-gov-west-1"},"s3signature":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"s3"}}};
+module.exports = {"rules":{"*/*":{"endpoint":"{service}.{region}.amazonaws.com"},"cn-*/*":{"endpoint":"{service}.{region}.amazonaws.com.cn"},"us-iso-*/*":"usIso","us-isob-*/*":"usIsob","*/budgets":"globalSSL","*/cloudfront":"globalSSL","*/sts":"globalSSL","*/importexport":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2","globalEndpoint":true},"*/route53":"globalSSL","cn-*/route53":{"endpoint":"{service}.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-northwest-1"},"us-gov-*/route53":"globalGovCloud","us-iso-*/route53":{"endpoint":"{service}.c2s.ic.gov","globalEndpoint":true,"signingRegion":"us-iso-east-1"},"us-isob-*/route53":{"endpoint":"{service}.sc2s.sgov.gov","globalEndpoint":true,"signingRegion":"us-isob-east-1"},"*/waf":"globalSSL","*/iam":"globalSSL","cn-*/iam":{"endpoint":"{service}.cn-north-1.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-north-1"},"us-gov-*/iam":"globalGovCloud","us-gov-*/sts":{"endpoint":"{service}.{region}.amazonaws.com"},"us-gov-west-1/s3":"s3signature","us-west-1/s3":"s3signature","us-west-2/s3":"s3signature","eu-west-1/s3":"s3signature","ap-southeast-1/s3":"s3signature","ap-southeast-2/s3":"s3signature","ap-northeast-1/s3":"s3signature","sa-east-1/s3":"s3signature","us-east-1/s3":{"endpoint":"{service}.amazonaws.com","signatureVersion":"s3"},"us-east-1/sdb":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2"},"*/sdb":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"v2"}},"fipsRules":{"*/*":"fipsStandard","us-gov-*/*":"fipsStandard","us-iso-*/*":{"endpoint":"{service}-fips.{region}.c2s.ic.gov"},"us-iso-*/dms":"usIso","us-isob-*/*":{"endpoint":"{service}-fips.{region}.sc2s.sgov.gov"},"us-isob-*/dms":"usIsob","cn-*/*":{"endpoint":"{service}-fips.{region}.amazonaws.com.cn"},"*/api.ecr":"fips.api.ecr","*/api.sagemaker":"fips.api.sagemaker","*/batch":"fipsDotPrefix","*/eks":"fipsDotPrefix","*/models.lex":"fips.models.lex","*/runtime.lex":"fips.runtime.lex","*/runtime.sagemaker":{"endpoint":"runtime-fips.sagemaker.{region}.amazonaws.com"},"*/iam":"fipsWithoutRegion","*/route53":"fipsWithoutRegion","*/transcribe":"fipsDotPrefix","*/waf":"fipsWithoutRegion","us-gov-*/transcribe":"fipsDotPrefix","us-gov-*/api.ecr":"fips.api.ecr","us-gov-*/api.sagemaker":"fips.api.sagemaker","us-gov-*/models.lex":"fips.models.lex","us-gov-*/runtime.lex":"fips.runtime.lex","us-gov-*/acm-pca":"fipsWithServiceOnly","us-gov-*/batch":"fipsWithServiceOnly","us-gov-*/config":"fipsWithServiceOnly","us-gov-*/eks":"fipsWithServiceOnly","us-gov-*/elasticmapreduce":"fipsWithServiceOnly","us-gov-*/identitystore":"fipsWithServiceOnly","us-gov-*/dynamodb":"fipsWithServiceOnly","us-gov-*/elasticloadbalancing":"fipsWithServiceOnly","us-gov-*/guardduty":"fipsWithServiceOnly","us-gov-*/monitoring":"fipsWithServiceOnly","us-gov-*/resource-groups":"fipsWithServiceOnly","us-gov-*/runtime.sagemaker":"fipsWithServiceOnly","us-gov-*/servicecatalog-appregistry":"fipsWithServiceOnly","us-gov-*/servicequotas":"fipsWithServiceOnly","us-gov-*/ssm":"fipsWithServiceOnly","us-gov-*/sts":"fipsWithServiceOnly","us-gov-*/support":"fipsWithServiceOnly","us-gov-west-1/states":"fipsWithServiceOnly","us-iso-east-1/elasticfilesystem":{"endpoint":"elasticfilesystem-fips.{region}.c2s.ic.gov"},"us-gov-west-1/organizations":"fipsWithServiceOnly","us-gov-west-1/route53":{"endpoint":"route53.us-gov.amazonaws.com"}},"dualstackRules":{"*/*":{"endpoint":"{service}.{region}.api.aws"},"cn-*/*":{"endpoint":"{service}.{region}.api.amazonwebservices.com.cn"},"*/s3":"dualstackLegacy","cn-*/s3":"dualstackLegacyCn","*/s3-control":"dualstackLegacy","cn-*/s3-control":"dualstackLegacyCn","ap-south-1/ec2":"dualstackLegacyEc2","eu-west-1/ec2":"dualstackLegacyEc2","sa-east-1/ec2":"dualstackLegacyEc2","us-east-1/ec2":"dualstackLegacyEc2","us-east-2/ec2":"dualstackLegacyEc2","us-west-2/ec2":"dualstackLegacyEc2"},"dualstackFipsRules":{"*/*":{"endpoint":"{service}-fips.{region}.api.aws"},"cn-*/*":{"endpoint":"{service}-fips.{region}.api.amazonwebservices.com.cn"},"*/s3":"dualstackFipsLegacy","cn-*/s3":"dualstackFipsLegacyCn","*/s3-control":"dualstackFipsLegacy","cn-*/s3-control":"dualstackFipsLegacyCn"},"patterns":{"globalSSL":{"endpoint":"https://{service}.amazonaws.com","globalEndpoint":true,"signingRegion":"us-east-1"},"globalGovCloud":{"endpoint":"{service}.us-gov.amazonaws.com","globalEndpoint":true,"signingRegion":"us-gov-west-1"},"s3signature":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"s3"},"usIso":{"endpoint":"{service}.{region}.c2s.ic.gov"},"usIsob":{"endpoint":"{service}.{region}.sc2s.sgov.gov"},"fipsStandard":{"endpoint":"{service}-fips.{region}.amazonaws.com"},"fipsDotPrefix":{"endpoint":"fips.{service}.{region}.amazonaws.com"},"fipsWithoutRegion":{"endpoint":"{service}-fips.amazonaws.com"},"fips.api.ecr":{"endpoint":"ecr-fips.{region}.amazonaws.com"},"fips.api.sagemaker":{"endpoint":"api-fips.sagemaker.{region}.amazonaws.com"},"fips.models.lex":{"endpoint":"models-fips.lex.{region}.amazonaws.com"},"fips.runtime.lex":{"endpoint":"runtime-fips.lex.{region}.amazonaws.com"},"fipsWithServiceOnly":{"endpoint":"{service}.{region}.amazonaws.com"},"dualstackLegacy":{"endpoint":"{service}.dualstack.{region}.amazonaws.com"},"dualstackLegacyCn":{"endpoint":"{service}.dualstack.{region}.amazonaws.com.cn"},"dualstackFipsLegacy":{"endpoint":"{service}-fips.dualstack.{region}.amazonaws.com"},"dualstackFipsLegacyCn":{"endpoint":"{service}-fips.dualstack.{region}.amazonaws.com.cn"},"dualstackLegacyEc2":{"endpoint":"api.ec2.{region}.aws"}}};
 
 /***/ }),
 
@@ -9829,6 +11202,36 @@ module.exports = Collection;
 
 /***/ }),
 
+/***/ 587:
+/***/ (function(module) {
+
+var getEndpointMode = function() {
+  return {
+    IPv4: 'IPv4',
+    IPv6: 'IPv6',
+  };
+};
+
+module.exports = getEndpointMode;
+
+
+/***/ }),
+
+/***/ 595:
+/***/ (function(module) {
+
+var getEndpoint = function() {
+  return {
+    IPv4: 'http://169.254.169.254',
+    IPv6: 'http://[fd00:ec2::254]',
+  };
+};
+
+module.exports = getEndpoint;
+
+
+/***/ }),
+
 /***/ 602:
 /***/ (function(module) {
 
@@ -10000,102 +11403,9 @@ module.exports = Collection;
 /***/ }),
 
 /***/ 605:
-/***/ (function(module, __unusedexports, __webpack_require__) {
+/***/ (function(module) {
 
-var util = __webpack_require__(395).util;
-var toBuffer = util.buffer.toBuffer;
-
-/**
- * A lossless representation of a signed, 64-bit integer. Instances of this
- * class may be used in arithmetic expressions as if they were numeric
- * primitives, but the binary representation will be preserved unchanged as the
- * `bytes` property of the object. The bytes should be encoded as big-endian,
- * two's complement integers.
- * @param {Buffer} bytes
- *
- * @api private
- */
-function Int64(bytes) {
-    if (bytes.length !== 8) {
-        throw new Error('Int64 buffers must be exactly 8 bytes');
-    }
-    if (!util.Buffer.isBuffer(bytes)) bytes = toBuffer(bytes);
-
-    this.bytes = bytes;
-}
-
-/**
- * @param {number} number
- * @returns {Int64}
- *
- * @api private
- */
-Int64.fromNumber = function(number) {
-    if (number > 9223372036854775807 || number < -9223372036854775808) {
-        throw new Error(
-            number + ' is too large (or, if negative, too small) to represent as an Int64'
-        );
-    }
-
-    var bytes = new Uint8Array(8);
-    for (
-        var i = 7, remaining = Math.abs(Math.round(number));
-        i > -1 && remaining > 0;
-        i--, remaining /= 256
-    ) {
-        bytes[i] = remaining;
-    }
-
-    if (number < 0) {
-        negate(bytes);
-    }
-
-    return new Int64(bytes);
-};
-
-/**
- * @returns {number}
- *
- * @api private
- */
-Int64.prototype.valueOf = function() {
-    var bytes = this.bytes.slice(0);
-    var negative = bytes[0] & 128;
-    if (negative) {
-        negate(bytes);
-    }
-
-    return parseInt(bytes.toString('hex'), 16) * (negative ? -1 : 1);
-};
-
-Int64.prototype.toString = function() {
-    return String(this.valueOf());
-};
-
-/**
- * @param {Buffer} bytes
- *
- * @api private
- */
-function negate(bytes) {
-    for (var i = 0; i < 8; i++) {
-        bytes[i] ^= 0xFF;
-    }
-    for (var i = 7; i > -1; i--) {
-        bytes[i]++;
-        if (bytes[i] !== 0) {
-            break;
-        }
-    }
-}
-
-/**
- * @api private
- */
-module.exports = {
-    Int64: Int64
-};
-
+module.exports = require("http");
 
 /***/ }),
 
@@ -10251,7 +11561,6 @@ AWS.EventListeners = {
         operation.httpChecksumRequired &&
         req.service.config.computeChecksums &&
         isNonStreamingPayload &&
-        req.service.getSignerClass(req) === AWS.Signers.V4 &&
         !headers['Content-MD5']
       ) {
         var md5 = AWS.util.crypto.md5(body, 'base64');
@@ -10628,7 +11937,7 @@ AWS.EventListeners = {
           ['EAI_NONAME', 'EAI_NODATA'].indexOf(AWS.util.getSystemErrorName(err.errno) >= 0);
       }
       if (err.code === 'NetworkingError' && isDNSError(err)) {
-        var message = 'Inaccessible host: `' + err.hostname +
+        var message = 'Inaccessible host: `' + err.hostname + '\' at port `' + err.port +
           '\'. This service may not be available in the `' + err.region +
           '\' region.';
         this.response.error = AWS.util.error(new Error(message), {
@@ -11547,6 +12856,13 @@ exports.LRUCache = LRUCache;
 
 /***/ }),
 
+/***/ 631:
+/***/ (function(module) {
+
+module.exports = require("net");
+
+/***/ }),
+
 /***/ 634:
 /***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
 
@@ -12193,7 +13509,7 @@ module.exports = Shape;
 /***/ 683:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-var Int64 = __webpack_require__(605).Int64;
+var Int64 = __webpack_require__(733).Int64;
 
 var splitMessage = __webpack_require__(175).splitMessage;
 
@@ -12342,7 +13658,7 @@ module.exports = {
 /***/ 694:
 /***/ (function(module) {
 
-module.exports = {"acm":{"name":"ACM","cors":true},"apigateway":{"name":"APIGateway","cors":true},"applicationautoscaling":{"prefix":"application-autoscaling","name":"ApplicationAutoScaling","cors":true},"appstream":{"name":"AppStream"},"autoscaling":{"name":"AutoScaling","cors":true},"batch":{"name":"Batch"},"budgets":{"name":"Budgets"},"clouddirectory":{"name":"CloudDirectory","versions":["2016-05-10*"]},"cloudformation":{"name":"CloudFormation","cors":true},"cloudfront":{"name":"CloudFront","versions":["2013-05-12*","2013-11-11*","2014-05-31*","2014-10-21*","2014-11-06*","2015-04-17*","2015-07-27*","2015-09-17*","2016-01-13*","2016-01-28*","2016-08-01*","2016-08-20*","2016-09-07*","2016-09-29*","2016-11-25*","2017-03-25*","2017-10-30*","2018-06-18*","2018-11-05*","2019-03-26*"],"cors":true},"cloudhsm":{"name":"CloudHSM","cors":true},"cloudsearch":{"name":"CloudSearch"},"cloudsearchdomain":{"name":"CloudSearchDomain"},"cloudtrail":{"name":"CloudTrail","cors":true},"cloudwatch":{"prefix":"monitoring","name":"CloudWatch","cors":true},"cloudwatchevents":{"prefix":"events","name":"CloudWatchEvents","versions":["2014-02-03*"],"cors":true},"cloudwatchlogs":{"prefix":"logs","name":"CloudWatchLogs","cors":true},"codebuild":{"name":"CodeBuild","cors":true},"codecommit":{"name":"CodeCommit","cors":true},"codedeploy":{"name":"CodeDeploy","cors":true},"codepipeline":{"name":"CodePipeline","cors":true},"cognitoidentity":{"prefix":"cognito-identity","name":"CognitoIdentity","cors":true},"cognitoidentityserviceprovider":{"prefix":"cognito-idp","name":"CognitoIdentityServiceProvider","cors":true},"cognitosync":{"prefix":"cognito-sync","name":"CognitoSync","cors":true},"configservice":{"prefix":"config","name":"ConfigService","cors":true},"cur":{"name":"CUR","cors":true},"datapipeline":{"name":"DataPipeline"},"devicefarm":{"name":"DeviceFarm","cors":true},"directconnect":{"name":"DirectConnect","cors":true},"directoryservice":{"prefix":"ds","name":"DirectoryService"},"discovery":{"name":"Discovery"},"dms":{"name":"DMS"},"dynamodb":{"name":"DynamoDB","cors":true},"dynamodbstreams":{"prefix":"streams.dynamodb","name":"DynamoDBStreams","cors":true},"ec2":{"name":"EC2","versions":["2013-06-15*","2013-10-15*","2014-02-01*","2014-05-01*","2014-06-15*","2014-09-01*","2014-10-01*","2015-03-01*","2015-04-15*","2015-10-01*","2016-04-01*","2016-09-15*"],"cors":true},"ecr":{"name":"ECR","cors":true},"ecs":{"name":"ECS","cors":true},"efs":{"prefix":"elasticfilesystem","name":"EFS","cors":true},"elasticache":{"name":"ElastiCache","versions":["2012-11-15*","2014-03-24*","2014-07-15*","2014-09-30*"],"cors":true},"elasticbeanstalk":{"name":"ElasticBeanstalk","cors":true},"elb":{"prefix":"elasticloadbalancing","name":"ELB","cors":true},"elbv2":{"prefix":"elasticloadbalancingv2","name":"ELBv2","cors":true},"emr":{"prefix":"elasticmapreduce","name":"EMR","cors":true},"es":{"name":"ES"},"elastictranscoder":{"name":"ElasticTranscoder","cors":true},"firehose":{"name":"Firehose","cors":true},"gamelift":{"name":"GameLift","cors":true},"glacier":{"name":"Glacier"},"health":{"name":"Health"},"iam":{"name":"IAM","cors":true},"importexport":{"name":"ImportExport"},"inspector":{"name":"Inspector","versions":["2015-08-18*"],"cors":true},"iot":{"name":"Iot","cors":true},"iotdata":{"prefix":"iot-data","name":"IotData","cors":true},"kinesis":{"name":"Kinesis","cors":true},"kinesisanalytics":{"name":"KinesisAnalytics"},"kms":{"name":"KMS","cors":true},"lambda":{"name":"Lambda","cors":true},"lexruntime":{"prefix":"runtime.lex","name":"LexRuntime","cors":true},"lightsail":{"name":"Lightsail"},"machinelearning":{"name":"MachineLearning","cors":true},"marketplacecommerceanalytics":{"name":"MarketplaceCommerceAnalytics","cors":true},"marketplacemetering":{"prefix":"meteringmarketplace","name":"MarketplaceMetering"},"mturk":{"prefix":"mturk-requester","name":"MTurk","cors":true},"mobileanalytics":{"name":"MobileAnalytics","cors":true},"opsworks":{"name":"OpsWorks","cors":true},"opsworkscm":{"name":"OpsWorksCM"},"organizations":{"name":"Organizations"},"pinpoint":{"name":"Pinpoint"},"polly":{"name":"Polly","cors":true},"rds":{"name":"RDS","versions":["2014-09-01*"],"cors":true},"redshift":{"name":"Redshift","cors":true},"rekognition":{"name":"Rekognition","cors":true},"resourcegroupstaggingapi":{"name":"ResourceGroupsTaggingAPI"},"route53":{"name":"Route53","cors":true},"route53domains":{"name":"Route53Domains","cors":true},"s3":{"name":"S3","dualstackAvailable":true,"cors":true},"s3control":{"name":"S3Control","dualstackAvailable":true,"xmlNoDefaultLists":true},"servicecatalog":{"name":"ServiceCatalog","cors":true},"ses":{"prefix":"email","name":"SES","cors":true},"shield":{"name":"Shield"},"simpledb":{"prefix":"sdb","name":"SimpleDB"},"sms":{"name":"SMS"},"snowball":{"name":"Snowball"},"sns":{"name":"SNS","cors":true},"sqs":{"name":"SQS","cors":true},"ssm":{"name":"SSM","cors":true},"storagegateway":{"name":"StorageGateway","cors":true},"stepfunctions":{"prefix":"states","name":"StepFunctions"},"sts":{"name":"STS","cors":true},"support":{"name":"Support"},"swf":{"name":"SWF"},"xray":{"name":"XRay","cors":true},"waf":{"name":"WAF","cors":true},"wafregional":{"prefix":"waf-regional","name":"WAFRegional"},"workdocs":{"name":"WorkDocs","cors":true},"workspaces":{"name":"WorkSpaces"},"codestar":{"name":"CodeStar"},"lexmodelbuildingservice":{"prefix":"lex-models","name":"LexModelBuildingService","cors":true},"marketplaceentitlementservice":{"prefix":"entitlement.marketplace","name":"MarketplaceEntitlementService"},"athena":{"name":"Athena","cors":true},"greengrass":{"name":"Greengrass"},"dax":{"name":"DAX"},"migrationhub":{"prefix":"AWSMigrationHub","name":"MigrationHub"},"cloudhsmv2":{"name":"CloudHSMV2","cors":true},"glue":{"name":"Glue"},"mobile":{"name":"Mobile"},"pricing":{"name":"Pricing","cors":true},"costexplorer":{"prefix":"ce","name":"CostExplorer","cors":true},"mediaconvert":{"name":"MediaConvert"},"medialive":{"name":"MediaLive"},"mediapackage":{"name":"MediaPackage"},"mediastore":{"name":"MediaStore"},"mediastoredata":{"prefix":"mediastore-data","name":"MediaStoreData","cors":true},"appsync":{"name":"AppSync"},"guardduty":{"name":"GuardDuty"},"mq":{"name":"MQ"},"comprehend":{"name":"Comprehend","cors":true},"iotjobsdataplane":{"prefix":"iot-jobs-data","name":"IoTJobsDataPlane"},"kinesisvideoarchivedmedia":{"prefix":"kinesis-video-archived-media","name":"KinesisVideoArchivedMedia","cors":true},"kinesisvideomedia":{"prefix":"kinesis-video-media","name":"KinesisVideoMedia","cors":true},"kinesisvideo":{"name":"KinesisVideo","cors":true},"sagemakerruntime":{"prefix":"runtime.sagemaker","name":"SageMakerRuntime"},"sagemaker":{"name":"SageMaker"},"translate":{"name":"Translate","cors":true},"resourcegroups":{"prefix":"resource-groups","name":"ResourceGroups","cors":true},"alexaforbusiness":{"name":"AlexaForBusiness"},"cloud9":{"name":"Cloud9"},"serverlessapplicationrepository":{"prefix":"serverlessrepo","name":"ServerlessApplicationRepository"},"servicediscovery":{"name":"ServiceDiscovery"},"workmail":{"name":"WorkMail"},"autoscalingplans":{"prefix":"autoscaling-plans","name":"AutoScalingPlans"},"transcribeservice":{"prefix":"transcribe","name":"TranscribeService"},"connect":{"name":"Connect","cors":true},"acmpca":{"prefix":"acm-pca","name":"ACMPCA"},"fms":{"name":"FMS"},"secretsmanager":{"name":"SecretsManager","cors":true},"iotanalytics":{"name":"IoTAnalytics","cors":true},"iot1clickdevicesservice":{"prefix":"iot1click-devices","name":"IoT1ClickDevicesService"},"iot1clickprojects":{"prefix":"iot1click-projects","name":"IoT1ClickProjects"},"pi":{"name":"PI"},"neptune":{"name":"Neptune"},"mediatailor":{"name":"MediaTailor"},"eks":{"name":"EKS"},"macie":{"name":"Macie"},"dlm":{"name":"DLM"},"signer":{"name":"Signer"},"chime":{"name":"Chime"},"pinpointemail":{"prefix":"pinpoint-email","name":"PinpointEmail"},"ram":{"name":"RAM"},"route53resolver":{"name":"Route53Resolver"},"pinpointsmsvoice":{"prefix":"sms-voice","name":"PinpointSMSVoice"},"quicksight":{"name":"QuickSight"},"rdsdataservice":{"prefix":"rds-data","name":"RDSDataService"},"amplify":{"name":"Amplify"},"datasync":{"name":"DataSync"},"robomaker":{"name":"RoboMaker"},"transfer":{"name":"Transfer"},"globalaccelerator":{"name":"GlobalAccelerator"},"comprehendmedical":{"name":"ComprehendMedical","cors":true},"kinesisanalyticsv2":{"name":"KinesisAnalyticsV2"},"mediaconnect":{"name":"MediaConnect"},"fsx":{"name":"FSx"},"securityhub":{"name":"SecurityHub"},"appmesh":{"name":"AppMesh","versions":["2018-10-01*"]},"licensemanager":{"prefix":"license-manager","name":"LicenseManager"},"kafka":{"name":"Kafka"},"apigatewaymanagementapi":{"name":"ApiGatewayManagementApi"},"apigatewayv2":{"name":"ApiGatewayV2"},"docdb":{"name":"DocDB"},"backup":{"name":"Backup"},"worklink":{"name":"WorkLink"},"textract":{"name":"Textract"},"managedblockchain":{"name":"ManagedBlockchain"},"mediapackagevod":{"prefix":"mediapackage-vod","name":"MediaPackageVod"},"groundstation":{"name":"GroundStation"},"iotthingsgraph":{"name":"IoTThingsGraph"},"iotevents":{"name":"IoTEvents"},"ioteventsdata":{"prefix":"iotevents-data","name":"IoTEventsData"},"personalize":{"name":"Personalize","cors":true},"personalizeevents":{"prefix":"personalize-events","name":"PersonalizeEvents","cors":true},"personalizeruntime":{"prefix":"personalize-runtime","name":"PersonalizeRuntime","cors":true},"applicationinsights":{"prefix":"application-insights","name":"ApplicationInsights"},"servicequotas":{"prefix":"service-quotas","name":"ServiceQuotas"},"ec2instanceconnect":{"prefix":"ec2-instance-connect","name":"EC2InstanceConnect"},"eventbridge":{"name":"EventBridge"},"lakeformation":{"name":"LakeFormation"},"forecastservice":{"prefix":"forecast","name":"ForecastService","cors":true},"forecastqueryservice":{"prefix":"forecastquery","name":"ForecastQueryService","cors":true},"qldb":{"name":"QLDB"},"qldbsession":{"prefix":"qldb-session","name":"QLDBSession"},"workmailmessageflow":{"name":"WorkMailMessageFlow"},"codestarnotifications":{"prefix":"codestar-notifications","name":"CodeStarNotifications"},"savingsplans":{"name":"SavingsPlans"},"sso":{"name":"SSO"},"ssooidc":{"prefix":"sso-oidc","name":"SSOOIDC"},"marketplacecatalog":{"prefix":"marketplace-catalog","name":"MarketplaceCatalog"},"dataexchange":{"name":"DataExchange"},"sesv2":{"name":"SESV2"},"migrationhubconfig":{"prefix":"migrationhub-config","name":"MigrationHubConfig"},"connectparticipant":{"name":"ConnectParticipant"},"appconfig":{"name":"AppConfig"},"iotsecuretunneling":{"name":"IoTSecureTunneling"},"wafv2":{"name":"WAFV2"},"elasticinference":{"prefix":"elastic-inference","name":"ElasticInference"},"imagebuilder":{"name":"Imagebuilder"},"schemas":{"name":"Schemas"},"accessanalyzer":{"name":"AccessAnalyzer"},"codegurureviewer":{"prefix":"codeguru-reviewer","name":"CodeGuruReviewer"},"codeguruprofiler":{"name":"CodeGuruProfiler"},"computeoptimizer":{"prefix":"compute-optimizer","name":"ComputeOptimizer"},"frauddetector":{"name":"FraudDetector"},"kendra":{"name":"Kendra"},"networkmanager":{"name":"NetworkManager"},"outposts":{"name":"Outposts"},"augmentedairuntime":{"prefix":"sagemaker-a2i-runtime","name":"AugmentedAIRuntime"},"ebs":{"name":"EBS"},"kinesisvideosignalingchannels":{"prefix":"kinesis-video-signaling","name":"KinesisVideoSignalingChannels","cors":true},"detective":{"name":"Detective"},"codestarconnections":{"prefix":"codestar-connections","name":"CodeStarconnections"},"synthetics":{"name":"Synthetics"},"iotsitewise":{"name":"IoTSiteWise"},"macie2":{"name":"Macie2"},"codeartifact":{"name":"CodeArtifact"},"honeycode":{"name":"Honeycode"},"ivs":{"name":"IVS"},"braket":{"name":"Braket"},"identitystore":{"name":"IdentityStore"},"appflow":{"name":"Appflow"},"redshiftdata":{"prefix":"redshift-data","name":"RedshiftData"},"ssoadmin":{"prefix":"sso-admin","name":"SSOAdmin"},"timestreamquery":{"prefix":"timestream-query","name":"TimestreamQuery"},"timestreamwrite":{"prefix":"timestream-write","name":"TimestreamWrite"},"s3outposts":{"name":"S3Outposts"},"databrew":{"name":"DataBrew"},"servicecatalogappregistry":{"prefix":"servicecatalog-appregistry","name":"ServiceCatalogAppRegistry"},"networkfirewall":{"prefix":"network-firewall","name":"NetworkFirewall"},"mwaa":{"name":"MWAA"},"amplifybackend":{"name":"AmplifyBackend"},"appintegrations":{"name":"AppIntegrations"},"connectcontactlens":{"prefix":"connect-contact-lens","name":"ConnectContactLens"},"devopsguru":{"prefix":"devops-guru","name":"DevOpsGuru"},"ecrpublic":{"prefix":"ecr-public","name":"ECRPUBLIC"},"lookoutvision":{"name":"LookoutVision"},"sagemakerfeaturestoreruntime":{"prefix":"sagemaker-featurestore-runtime","name":"SageMakerFeatureStoreRuntime"},"customerprofiles":{"prefix":"customer-profiles","name":"CustomerProfiles"},"auditmanager":{"name":"AuditManager"},"emrcontainers":{"prefix":"emr-containers","name":"EMRcontainers"},"healthlake":{"name":"HealthLake"},"sagemakeredge":{"prefix":"sagemaker-edge","name":"SagemakerEdge"},"amp":{"name":"Amp"},"greengrassv2":{"name":"GreengrassV2"},"iotdeviceadvisor":{"name":"IotDeviceAdvisor"},"iotfleethub":{"name":"IoTFleetHub"},"iotwireless":{"name":"IoTWireless"},"location":{"name":"Location","cors":true},"wellarchitected":{"name":"WellArchitected"},"lexmodelsv2":{"prefix":"models.lex.v2","name":"LexModelsV2"},"lexruntimev2":{"prefix":"runtime.lex.v2","name":"LexRuntimeV2","cors":true},"fis":{"name":"Fis"},"lookoutmetrics":{"name":"LookoutMetrics"},"mgn":{"name":"Mgn"},"lookoutequipment":{"name":"LookoutEquipment"},"nimble":{"name":"Nimble"},"finspace":{"name":"Finspace"},"finspacedata":{"prefix":"finspace-data","name":"Finspacedata"},"ssmcontacts":{"prefix":"ssm-contacts","name":"SSMContacts"},"ssmincidents":{"prefix":"ssm-incidents","name":"SSMIncidents"},"applicationcostprofiler":{"name":"ApplicationCostProfiler"},"apprunner":{"name":"AppRunner"},"proton":{"name":"Proton"},"route53recoverycluster":{"prefix":"route53-recovery-cluster","name":"Route53RecoveryCluster"},"route53recoverycontrolconfig":{"prefix":"route53-recovery-control-config","name":"Route53RecoveryControlConfig"},"route53recoveryreadiness":{"prefix":"route53-recovery-readiness","name":"Route53RecoveryReadiness"},"chimesdkidentity":{"prefix":"chime-sdk-identity","name":"ChimeSDKIdentity"},"chimesdkmessaging":{"prefix":"chime-sdk-messaging","name":"ChimeSDKMessaging"},"snowdevicemanagement":{"prefix":"snow-device-management","name":"SnowDeviceManagement"}};
+module.exports = {"acm":{"name":"ACM","cors":true},"apigateway":{"name":"APIGateway","cors":true},"applicationautoscaling":{"prefix":"application-autoscaling","name":"ApplicationAutoScaling","cors":true},"appstream":{"name":"AppStream"},"autoscaling":{"name":"AutoScaling","cors":true},"batch":{"name":"Batch"},"budgets":{"name":"Budgets"},"clouddirectory":{"name":"CloudDirectory","versions":["2016-05-10*"]},"cloudformation":{"name":"CloudFormation","cors":true},"cloudfront":{"name":"CloudFront","versions":["2013-05-12*","2013-11-11*","2014-05-31*","2014-10-21*","2014-11-06*","2015-04-17*","2015-07-27*","2015-09-17*","2016-01-13*","2016-01-28*","2016-08-01*","2016-08-20*","2016-09-07*","2016-09-29*","2016-11-25*","2017-03-25*","2017-10-30*","2018-06-18*","2018-11-05*","2019-03-26*"],"cors":true},"cloudhsm":{"name":"CloudHSM","cors":true},"cloudsearch":{"name":"CloudSearch"},"cloudsearchdomain":{"name":"CloudSearchDomain"},"cloudtrail":{"name":"CloudTrail","cors":true},"cloudwatch":{"prefix":"monitoring","name":"CloudWatch","cors":true},"cloudwatchevents":{"prefix":"events","name":"CloudWatchEvents","versions":["2014-02-03*"],"cors":true},"cloudwatchlogs":{"prefix":"logs","name":"CloudWatchLogs","cors":true},"codebuild":{"name":"CodeBuild","cors":true},"codecommit":{"name":"CodeCommit","cors":true},"codedeploy":{"name":"CodeDeploy","cors":true},"codepipeline":{"name":"CodePipeline","cors":true},"cognitoidentity":{"prefix":"cognito-identity","name":"CognitoIdentity","cors":true},"cognitoidentityserviceprovider":{"prefix":"cognito-idp","name":"CognitoIdentityServiceProvider","cors":true},"cognitosync":{"prefix":"cognito-sync","name":"CognitoSync","cors":true},"configservice":{"prefix":"config","name":"ConfigService","cors":true},"cur":{"name":"CUR","cors":true},"datapipeline":{"name":"DataPipeline"},"devicefarm":{"name":"DeviceFarm","cors":true},"directconnect":{"name":"DirectConnect","cors":true},"directoryservice":{"prefix":"ds","name":"DirectoryService"},"discovery":{"name":"Discovery"},"dms":{"name":"DMS"},"dynamodb":{"name":"DynamoDB","cors":true},"dynamodbstreams":{"prefix":"streams.dynamodb","name":"DynamoDBStreams","cors":true},"ec2":{"name":"EC2","versions":["2013-06-15*","2013-10-15*","2014-02-01*","2014-05-01*","2014-06-15*","2014-09-01*","2014-10-01*","2015-03-01*","2015-04-15*","2015-10-01*","2016-04-01*","2016-09-15*"],"cors":true},"ecr":{"name":"ECR","cors":true},"ecs":{"name":"ECS","cors":true},"efs":{"prefix":"elasticfilesystem","name":"EFS","cors":true},"elasticache":{"name":"ElastiCache","versions":["2012-11-15*","2014-03-24*","2014-07-15*","2014-09-30*"],"cors":true},"elasticbeanstalk":{"name":"ElasticBeanstalk","cors":true},"elb":{"prefix":"elasticloadbalancing","name":"ELB","cors":true},"elbv2":{"prefix":"elasticloadbalancingv2","name":"ELBv2","cors":true},"emr":{"prefix":"elasticmapreduce","name":"EMR","cors":true},"es":{"name":"ES"},"elastictranscoder":{"name":"ElasticTranscoder","cors":true},"firehose":{"name":"Firehose","cors":true},"gamelift":{"name":"GameLift","cors":true},"glacier":{"name":"Glacier"},"health":{"name":"Health"},"iam":{"name":"IAM","cors":true},"importexport":{"name":"ImportExport"},"inspector":{"name":"Inspector","versions":["2015-08-18*"],"cors":true},"iot":{"name":"Iot","cors":true},"iotdata":{"prefix":"iot-data","name":"IotData","cors":true},"kinesis":{"name":"Kinesis","cors":true},"kinesisanalytics":{"name":"KinesisAnalytics"},"kms":{"name":"KMS","cors":true},"lambda":{"name":"Lambda","cors":true},"lexruntime":{"prefix":"runtime.lex","name":"LexRuntime","cors":true},"lightsail":{"name":"Lightsail"},"machinelearning":{"name":"MachineLearning","cors":true},"marketplacecommerceanalytics":{"name":"MarketplaceCommerceAnalytics","cors":true},"marketplacemetering":{"prefix":"meteringmarketplace","name":"MarketplaceMetering"},"mturk":{"prefix":"mturk-requester","name":"MTurk","cors":true},"mobileanalytics":{"name":"MobileAnalytics","cors":true},"opsworks":{"name":"OpsWorks","cors":true},"opsworkscm":{"name":"OpsWorksCM"},"organizations":{"name":"Organizations"},"pinpoint":{"name":"Pinpoint"},"polly":{"name":"Polly","cors":true},"rds":{"name":"RDS","versions":["2014-09-01*"],"cors":true},"redshift":{"name":"Redshift","cors":true},"rekognition":{"name":"Rekognition","cors":true},"resourcegroupstaggingapi":{"name":"ResourceGroupsTaggingAPI"},"route53":{"name":"Route53","cors":true},"route53domains":{"name":"Route53Domains","cors":true},"s3":{"name":"S3","dualstackAvailable":true,"cors":true},"s3control":{"name":"S3Control","dualstackAvailable":true,"xmlNoDefaultLists":true},"servicecatalog":{"name":"ServiceCatalog","cors":true},"ses":{"prefix":"email","name":"SES","cors":true},"shield":{"name":"Shield"},"simpledb":{"prefix":"sdb","name":"SimpleDB"},"sms":{"name":"SMS"},"snowball":{"name":"Snowball"},"sns":{"name":"SNS","cors":true},"sqs":{"name":"SQS","cors":true},"ssm":{"name":"SSM","cors":true},"storagegateway":{"name":"StorageGateway","cors":true},"stepfunctions":{"prefix":"states","name":"StepFunctions"},"sts":{"name":"STS","cors":true},"support":{"name":"Support"},"swf":{"name":"SWF"},"xray":{"name":"XRay","cors":true},"waf":{"name":"WAF","cors":true},"wafregional":{"prefix":"waf-regional","name":"WAFRegional"},"workdocs":{"name":"WorkDocs","cors":true},"workspaces":{"name":"WorkSpaces"},"codestar":{"name":"CodeStar"},"lexmodelbuildingservice":{"prefix":"lex-models","name":"LexModelBuildingService","cors":true},"marketplaceentitlementservice":{"prefix":"entitlement.marketplace","name":"MarketplaceEntitlementService"},"athena":{"name":"Athena","cors":true},"greengrass":{"name":"Greengrass"},"dax":{"name":"DAX"},"migrationhub":{"prefix":"AWSMigrationHub","name":"MigrationHub"},"cloudhsmv2":{"name":"CloudHSMV2","cors":true},"glue":{"name":"Glue"},"mobile":{"name":"Mobile"},"pricing":{"name":"Pricing","cors":true},"costexplorer":{"prefix":"ce","name":"CostExplorer","cors":true},"mediaconvert":{"name":"MediaConvert"},"medialive":{"name":"MediaLive"},"mediapackage":{"name":"MediaPackage"},"mediastore":{"name":"MediaStore"},"mediastoredata":{"prefix":"mediastore-data","name":"MediaStoreData","cors":true},"appsync":{"name":"AppSync"},"guardduty":{"name":"GuardDuty"},"mq":{"name":"MQ"},"comprehend":{"name":"Comprehend","cors":true},"iotjobsdataplane":{"prefix":"iot-jobs-data","name":"IoTJobsDataPlane"},"kinesisvideoarchivedmedia":{"prefix":"kinesis-video-archived-media","name":"KinesisVideoArchivedMedia","cors":true},"kinesisvideomedia":{"prefix":"kinesis-video-media","name":"KinesisVideoMedia","cors":true},"kinesisvideo":{"name":"KinesisVideo","cors":true},"sagemakerruntime":{"prefix":"runtime.sagemaker","name":"SageMakerRuntime"},"sagemaker":{"name":"SageMaker"},"translate":{"name":"Translate","cors":true},"resourcegroups":{"prefix":"resource-groups","name":"ResourceGroups","cors":true},"alexaforbusiness":{"name":"AlexaForBusiness"},"cloud9":{"name":"Cloud9"},"serverlessapplicationrepository":{"prefix":"serverlessrepo","name":"ServerlessApplicationRepository"},"servicediscovery":{"name":"ServiceDiscovery"},"workmail":{"name":"WorkMail"},"autoscalingplans":{"prefix":"autoscaling-plans","name":"AutoScalingPlans"},"transcribeservice":{"prefix":"transcribe","name":"TranscribeService"},"connect":{"name":"Connect","cors":true},"acmpca":{"prefix":"acm-pca","name":"ACMPCA"},"fms":{"name":"FMS"},"secretsmanager":{"name":"SecretsManager","cors":true},"iotanalytics":{"name":"IoTAnalytics","cors":true},"iot1clickdevicesservice":{"prefix":"iot1click-devices","name":"IoT1ClickDevicesService"},"iot1clickprojects":{"prefix":"iot1click-projects","name":"IoT1ClickProjects"},"pi":{"name":"PI"},"neptune":{"name":"Neptune"},"mediatailor":{"name":"MediaTailor"},"eks":{"name":"EKS"},"macie":{"name":"Macie"},"dlm":{"name":"DLM"},"signer":{"name":"Signer"},"chime":{"name":"Chime"},"pinpointemail":{"prefix":"pinpoint-email","name":"PinpointEmail"},"ram":{"name":"RAM"},"route53resolver":{"name":"Route53Resolver"},"pinpointsmsvoice":{"prefix":"sms-voice","name":"PinpointSMSVoice"},"quicksight":{"name":"QuickSight"},"rdsdataservice":{"prefix":"rds-data","name":"RDSDataService"},"amplify":{"name":"Amplify"},"datasync":{"name":"DataSync"},"robomaker":{"name":"RoboMaker"},"transfer":{"name":"Transfer"},"globalaccelerator":{"name":"GlobalAccelerator"},"comprehendmedical":{"name":"ComprehendMedical","cors":true},"kinesisanalyticsv2":{"name":"KinesisAnalyticsV2"},"mediaconnect":{"name":"MediaConnect"},"fsx":{"name":"FSx"},"securityhub":{"name":"SecurityHub"},"appmesh":{"name":"AppMesh","versions":["2018-10-01*"]},"licensemanager":{"prefix":"license-manager","name":"LicenseManager"},"kafka":{"name":"Kafka"},"apigatewaymanagementapi":{"name":"ApiGatewayManagementApi"},"apigatewayv2":{"name":"ApiGatewayV2"},"docdb":{"name":"DocDB"},"backup":{"name":"Backup"},"worklink":{"name":"WorkLink"},"textract":{"name":"Textract"},"managedblockchain":{"name":"ManagedBlockchain"},"mediapackagevod":{"prefix":"mediapackage-vod","name":"MediaPackageVod"},"groundstation":{"name":"GroundStation"},"iotthingsgraph":{"name":"IoTThingsGraph"},"iotevents":{"name":"IoTEvents"},"ioteventsdata":{"prefix":"iotevents-data","name":"IoTEventsData"},"personalize":{"name":"Personalize","cors":true},"personalizeevents":{"prefix":"personalize-events","name":"PersonalizeEvents","cors":true},"personalizeruntime":{"prefix":"personalize-runtime","name":"PersonalizeRuntime","cors":true},"applicationinsights":{"prefix":"application-insights","name":"ApplicationInsights"},"servicequotas":{"prefix":"service-quotas","name":"ServiceQuotas"},"ec2instanceconnect":{"prefix":"ec2-instance-connect","name":"EC2InstanceConnect"},"eventbridge":{"name":"EventBridge"},"lakeformation":{"name":"LakeFormation"},"forecastservice":{"prefix":"forecast","name":"ForecastService","cors":true},"forecastqueryservice":{"prefix":"forecastquery","name":"ForecastQueryService","cors":true},"qldb":{"name":"QLDB"},"qldbsession":{"prefix":"qldb-session","name":"QLDBSession"},"workmailmessageflow":{"name":"WorkMailMessageFlow"},"codestarnotifications":{"prefix":"codestar-notifications","name":"CodeStarNotifications"},"savingsplans":{"name":"SavingsPlans"},"sso":{"name":"SSO"},"ssooidc":{"prefix":"sso-oidc","name":"SSOOIDC"},"marketplacecatalog":{"prefix":"marketplace-catalog","name":"MarketplaceCatalog"},"dataexchange":{"name":"DataExchange"},"sesv2":{"name":"SESV2"},"migrationhubconfig":{"prefix":"migrationhub-config","name":"MigrationHubConfig"},"connectparticipant":{"name":"ConnectParticipant"},"appconfig":{"name":"AppConfig"},"iotsecuretunneling":{"name":"IoTSecureTunneling"},"wafv2":{"name":"WAFV2"},"elasticinference":{"prefix":"elastic-inference","name":"ElasticInference"},"imagebuilder":{"name":"Imagebuilder"},"schemas":{"name":"Schemas"},"accessanalyzer":{"name":"AccessAnalyzer"},"codegurureviewer":{"prefix":"codeguru-reviewer","name":"CodeGuruReviewer"},"codeguruprofiler":{"name":"CodeGuruProfiler"},"computeoptimizer":{"prefix":"compute-optimizer","name":"ComputeOptimizer"},"frauddetector":{"name":"FraudDetector"},"kendra":{"name":"Kendra"},"networkmanager":{"name":"NetworkManager"},"outposts":{"name":"Outposts"},"augmentedairuntime":{"prefix":"sagemaker-a2i-runtime","name":"AugmentedAIRuntime"},"ebs":{"name":"EBS"},"kinesisvideosignalingchannels":{"prefix":"kinesis-video-signaling","name":"KinesisVideoSignalingChannels","cors":true},"detective":{"name":"Detective"},"codestarconnections":{"prefix":"codestar-connections","name":"CodeStarconnections"},"synthetics":{"name":"Synthetics"},"iotsitewise":{"name":"IoTSiteWise"},"macie2":{"name":"Macie2"},"codeartifact":{"name":"CodeArtifact"},"honeycode":{"name":"Honeycode"},"ivs":{"name":"IVS"},"braket":{"name":"Braket"},"identitystore":{"name":"IdentityStore"},"appflow":{"name":"Appflow"},"redshiftdata":{"prefix":"redshift-data","name":"RedshiftData"},"ssoadmin":{"prefix":"sso-admin","name":"SSOAdmin"},"timestreamquery":{"prefix":"timestream-query","name":"TimestreamQuery"},"timestreamwrite":{"prefix":"timestream-write","name":"TimestreamWrite"},"s3outposts":{"name":"S3Outposts"},"databrew":{"name":"DataBrew"},"servicecatalogappregistry":{"prefix":"servicecatalog-appregistry","name":"ServiceCatalogAppRegistry"},"networkfirewall":{"prefix":"network-firewall","name":"NetworkFirewall"},"mwaa":{"name":"MWAA"},"amplifybackend":{"name":"AmplifyBackend"},"appintegrations":{"name":"AppIntegrations"},"connectcontactlens":{"prefix":"connect-contact-lens","name":"ConnectContactLens"},"devopsguru":{"prefix":"devops-guru","name":"DevOpsGuru"},"ecrpublic":{"prefix":"ecr-public","name":"ECRPUBLIC"},"lookoutvision":{"name":"LookoutVision"},"sagemakerfeaturestoreruntime":{"prefix":"sagemaker-featurestore-runtime","name":"SageMakerFeatureStoreRuntime"},"customerprofiles":{"prefix":"customer-profiles","name":"CustomerProfiles"},"auditmanager":{"name":"AuditManager"},"emrcontainers":{"prefix":"emr-containers","name":"EMRcontainers"},"healthlake":{"name":"HealthLake"},"sagemakeredge":{"prefix":"sagemaker-edge","name":"SagemakerEdge"},"amp":{"name":"Amp"},"greengrassv2":{"name":"GreengrassV2"},"iotdeviceadvisor":{"name":"IotDeviceAdvisor"},"iotfleethub":{"name":"IoTFleetHub"},"iotwireless":{"name":"IoTWireless"},"location":{"name":"Location","cors":true},"wellarchitected":{"name":"WellArchitected"},"lexmodelsv2":{"prefix":"models.lex.v2","name":"LexModelsV2"},"lexruntimev2":{"prefix":"runtime.lex.v2","name":"LexRuntimeV2","cors":true},"fis":{"name":"Fis"},"lookoutmetrics":{"name":"LookoutMetrics"},"mgn":{"name":"Mgn"},"lookoutequipment":{"name":"LookoutEquipment"},"nimble":{"name":"Nimble"},"finspace":{"name":"Finspace"},"finspacedata":{"prefix":"finspace-data","name":"Finspacedata"},"ssmcontacts":{"prefix":"ssm-contacts","name":"SSMContacts"},"ssmincidents":{"prefix":"ssm-incidents","name":"SSMIncidents"},"applicationcostprofiler":{"name":"ApplicationCostProfiler"},"apprunner":{"name":"AppRunner"},"proton":{"name":"Proton"},"route53recoverycluster":{"prefix":"route53-recovery-cluster","name":"Route53RecoveryCluster"},"route53recoverycontrolconfig":{"prefix":"route53-recovery-control-config","name":"Route53RecoveryControlConfig"},"route53recoveryreadiness":{"prefix":"route53-recovery-readiness","name":"Route53RecoveryReadiness"},"chimesdkidentity":{"prefix":"chime-sdk-identity","name":"ChimeSDKIdentity"},"chimesdkmessaging":{"prefix":"chime-sdk-messaging","name":"ChimeSDKMessaging"},"snowdevicemanagement":{"prefix":"snow-device-management","name":"SnowDeviceManagement"},"memorydb":{"name":"MemoryDB"},"opensearch":{"name":"OpenSearch"},"kafkaconnect":{"name":"KafkaConnect"},"voiceid":{"prefix":"voice-id","name":"VoiceID"},"wisdom":{"name":"Wisdom"},"account":{"name":"Account"},"cloudcontrol":{"name":"CloudControl"},"grafana":{"name":"Grafana"},"panorama":{"name":"Panorama"},"chimesdkmeetings":{"prefix":"chime-sdk-meetings","name":"ChimeSDKMeetings"},"resiliencehub":{"name":"Resiliencehub"},"migrationhubstrategy":{"name":"MigrationHubStrategy"},"appconfigdata":{"name":"AppConfigData"},"drs":{"name":"Drs"},"migrationhubrefactorspaces":{"prefix":"migration-hub-refactor-spaces","name":"MigrationHubRefactorSpaces"},"evidently":{"name":"Evidently"},"inspector2":{"name":"Inspector2"},"rbin":{"name":"Rbin"},"rum":{"name":"RUM"},"backupgateway":{"prefix":"backup-gateway","name":"BackupGateway"},"iottwinmaker":{"name":"IoTTwinMaker"},"workspacesweb":{"prefix":"workspaces-web","name":"WorkSpacesWeb"},"amplifyuibuilder":{"name":"AmplifyUIBuilder"},"keyspaces":{"name":"Keyspaces"},"billingconductor":{"name":"Billingconductor"},"gamesparks":{"name":"GameSparks"},"pinpointsmsvoicev2":{"prefix":"pinpoint-sms-voice-v2","name":"PinpointSMSVoiceV2"}};
 
 /***/ }),
 
@@ -12855,7 +14171,7 @@ module.exports = bytesToUuid;
 /***/ 723:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-var Transform = __webpack_require__(413).Transform;
+var Transform = __webpack_require__(794).Transform;
 var parseEvent = __webpack_require__(657).parseEvent;
 
 /** @type {Transform} */
@@ -12901,25 +14217,99 @@ module.exports = {
 /***/ 733:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
-__webpack_require__(234);
-var AWS = __webpack_require__(395);
-var Service = AWS.Service;
-var apiLoader = AWS.apiLoader;
+var util = __webpack_require__(395).util;
+var toBuffer = util.buffer.toBuffer;
 
-apiLoader.services['sts'] = {};
-AWS.STS = Service.defineService('sts', ['2011-06-15']);
-__webpack_require__(861);
-Object.defineProperty(apiLoader.services['sts'], '2011-06-15', {
-  get: function get() {
-    var model = __webpack_require__(715);
-    model.paginators = __webpack_require__(262).pagination;
-    return model;
-  },
-  enumerable: true,
-  configurable: true
-});
+/**
+ * A lossless representation of a signed, 64-bit integer. Instances of this
+ * class may be used in arithmetic expressions as if they were numeric
+ * primitives, but the binary representation will be preserved unchanged as the
+ * `bytes` property of the object. The bytes should be encoded as big-endian,
+ * two's complement integers.
+ * @param {Buffer} bytes
+ *
+ * @api private
+ */
+function Int64(bytes) {
+    if (bytes.length !== 8) {
+        throw new Error('Int64 buffers must be exactly 8 bytes');
+    }
+    if (!util.Buffer.isBuffer(bytes)) bytes = toBuffer(bytes);
 
-module.exports = AWS.STS;
+    this.bytes = bytes;
+}
+
+/**
+ * @param {number} number
+ * @returns {Int64}
+ *
+ * @api private
+ */
+Int64.fromNumber = function(number) {
+    if (number > 9223372036854775807 || number < -9223372036854775808) {
+        throw new Error(
+            number + ' is too large (or, if negative, too small) to represent as an Int64'
+        );
+    }
+
+    var bytes = new Uint8Array(8);
+    for (
+        var i = 7, remaining = Math.abs(Math.round(number));
+        i > -1 && remaining > 0;
+        i--, remaining /= 256
+    ) {
+        bytes[i] = remaining;
+    }
+
+    if (number < 0) {
+        negate(bytes);
+    }
+
+    return new Int64(bytes);
+};
+
+/**
+ * @returns {number}
+ *
+ * @api private
+ */
+Int64.prototype.valueOf = function() {
+    var bytes = this.bytes.slice(0);
+    var negative = bytes[0] & 128;
+    if (negative) {
+        negate(bytes);
+    }
+
+    return parseInt(bytes.toString('hex'), 16) * (negative ? -1 : 1);
+};
+
+Int64.prototype.toString = function() {
+    return String(this.valueOf());
+};
+
+/**
+ * @param {Buffer} bytes
+ *
+ * @api private
+ */
+function negate(bytes) {
+    for (var i = 0; i < 8; i++) {
+        bytes[i] ^= 0xFF;
+    }
+    for (var i = 7; i > -1; i--) {
+        bytes[i]++;
+        if (bytes[i] !== 0) {
+            break;
+        }
+    }
+}
+
+/**
+ * @api private
+ */
+module.exports = {
+    Int64: Int64
+};
 
 
 /***/ }),
@@ -13082,6 +14472,90 @@ module.exports = AWS.STS;
 
 }).call(this);
 
+
+/***/ }),
+
+/***/ 742:
+/***/ (function(__unusedmodule, exports, __webpack_require__) {
+
+"use strict";
+
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.OidcClient = void 0;
+const http_client_1 = __webpack_require__(539);
+const auth_1 = __webpack_require__(226);
+const core_1 = __webpack_require__(470);
+class OidcClient {
+    static createHttpClient(allowRetry = true, maxRetry = 10) {
+        const requestOptions = {
+            allowRetries: allowRetry,
+            maxRetries: maxRetry
+        };
+        return new http_client_1.HttpClient('actions/oidc-client', [new auth_1.BearerCredentialHandler(OidcClient.getRequestToken())], requestOptions);
+    }
+    static getRequestToken() {
+        const token = process.env['ACTIONS_ID_TOKEN_REQUEST_TOKEN'];
+        if (!token) {
+            throw new Error('Unable to get ACTIONS_ID_TOKEN_REQUEST_TOKEN env variable');
+        }
+        return token;
+    }
+    static getIDTokenUrl() {
+        const runtimeUrl = process.env['ACTIONS_ID_TOKEN_REQUEST_URL'];
+        if (!runtimeUrl) {
+            throw new Error('Unable to get ACTIONS_ID_TOKEN_REQUEST_URL env variable');
+        }
+        return runtimeUrl;
+    }
+    static getCall(id_token_url) {
+        var _a;
+        return __awaiter(this, void 0, void 0, function* () {
+            const httpclient = OidcClient.createHttpClient();
+            const res = yield httpclient
+                .getJson(id_token_url)
+                .catch(error => {
+                throw new Error(`Failed to get ID Token. \n 
+        Error Code : ${error.statusCode}\n 
+        Error Message: ${error.result.message}`);
+            });
+            const id_token = (_a = res.result) === null || _a === void 0 ? void 0 : _a.value;
+            if (!id_token) {
+                throw new Error('Response json body do not have ID Token field');
+            }
+            return id_token;
+        });
+    }
+    static getIDToken(audience) {
+        return __awaiter(this, void 0, void 0, function* () {
+            try {
+                // New ID Token is requested from action service
+                let id_token_url = OidcClient.getIDTokenUrl();
+                if (audience) {
+                    const encodedAudience = encodeURIComponent(audience);
+                    id_token_url = `${id_token_url}&audience=${encodedAudience}`;
+                }
+                core_1.debug(`ID token url is ${id_token_url}`);
+                const id_token = yield OidcClient.getCall(id_token_url);
+                core_1.setSecret(id_token);
+                return id_token;
+            }
+            catch (error) {
+                throw new Error(`Error message: ${error.message}`);
+            }
+        });
+    }
+}
+exports.OidcClient = OidcClient;
+//# sourceMappingURL=oidc-utils.js.map
 
 /***/ }),
 
@@ -13439,6 +14913,8 @@ module.exports = require("fs");
 var AWS = __webpack_require__(395);
 __webpack_require__(711);
 var inherit = AWS.util.inherit;
+var getMetadataServiceEndpoint = __webpack_require__(756);
+var URL = __webpack_require__(414).URL;
 
 /**
  * Represents a metadata service available on EC2 instances. Using the
@@ -13458,9 +14934,9 @@ var inherit = AWS.util.inherit;
  */
 AWS.MetadataService = inherit({
   /**
-   * @return [String] the hostname of the instance metadata service
+   * @return [String] the endpoint of the instance metadata service
    */
-  host: '169.254.169.254',
+  endpoint: getMetadataServiceEndpoint(),
 
   /**
    * @!ignore
@@ -13496,6 +14972,10 @@ AWS.MetadataService = inherit({
    *   retry delay on retryable errors. See AWS.Config for details.
    */
   constructor: function MetadataService(options) {
+    if (options && options.host) {
+      options.endpoint = 'http://' + options.host;
+      delete options.host;
+    }
     AWS.util.update(this, options);
   },
 
@@ -13528,7 +15008,11 @@ AWS.MetadataService = inherit({
     }
 
     path = path || '/';
-    var httpRequest = new AWS.HttpRequest('http://' + this.host + path);
+
+    // Verify that host is a valid URL
+    if (URL) { new URL(this.endpoint); }
+
+    var httpRequest = new AWS.HttpRequest(this.endpoint + path);
     httpRequest.method = options.method || 'GET';
     if (options.headers) {
       httpRequest.headers = options.headers;
@@ -13859,7 +15343,7 @@ AWS.Signers.V4 = inherit(AWS.Signers.RequestSigner, {
 
   hexEncodedBodyHash: function hexEncodedBodyHash() {
     var request = this.request;
-    if (this.isPresigned() && this.serviceName === 's3' && !request.body) {
+    if (this.isPresigned() && (['s3', 's3-object-lambda'].indexOf(this.serviceName) > -1) && !request.body) {
       return 'UNSIGNED-PAYLOAD';
     } else if (request.headers['X-Amz-Content-Sha256']) {
       return request.headers['X-Amz-Content-Sha256'];
@@ -13956,6 +15440,37 @@ module.exports = AWS.Signers.V4;
   })(XMLNode);
 
 }).call(this);
+
+
+/***/ }),
+
+/***/ 756:
+/***/ (function(module, __unusedexports, __webpack_require__) {
+
+var AWS = __webpack_require__(395);
+
+var Endpoint = __webpack_require__(595)();
+var EndpointMode = __webpack_require__(587)();
+
+var ENDPOINT_CONFIG_OPTIONS = __webpack_require__(160)();
+var ENDPOINT_MODE_CONFIG_OPTIONS = __webpack_require__(273)();
+
+var getMetadataServiceEndpoint = function() {
+  var endpoint = AWS.util.loadConfig(ENDPOINT_CONFIG_OPTIONS);
+  if (endpoint !== undefined) return endpoint;
+
+  var endpointMode = AWS.util.loadConfig(ENDPOINT_MODE_CONFIG_OPTIONS);
+  switch (endpointMode) {
+    case EndpointMode.IPv4:
+      return Endpoint.IPv4;
+    case EndpointMode.IPv6:
+      return Endpoint.IPv6;
+    default:
+      throw new Error('Unsupported endpoint mode: ' + endpointMode);
+  }
+};
+
+module.exports = getMetadataServiceEndpoint;
 
 
 /***/ }),
@@ -14637,6 +16152,13 @@ module.exports = AWS.Signers.V3;
 
 /***/ }),
 
+/***/ 794:
+/***/ (function(module) {
+
+module.exports = require("stream");
+
+/***/ }),
+
 /***/ 796:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -14957,6 +16479,18 @@ module.exports = AWS.Signers.V3;
   var TYPE_NULL = 7;
   var TYPE_ARRAY_NUMBER = 8;
   var TYPE_ARRAY_STRING = 9;
+  var TYPE_NAME_TABLE = {
+    0: 'number',
+    1: 'any',
+    2: 'string',
+    3: 'array',
+    4: 'object',
+    5: 'boolean',
+    6: 'expression',
+    7: 'null',
+    8: 'Array<number>',
+    9: 'Array<string>'
+  };
 
   var TOK_EOF = "EOF";
   var TOK_UNQUOTEDIDENTIFIER = "UnquotedIdentifier";
@@ -15368,10 +16902,8 @@ module.exports = AWS.Signers.V3;
             var node = {type: "Field", name: token.value};
             if (this._lookahead(0) === TOK_LPAREN) {
                 throw new Error("Quoted identifier not allowed for function names.");
-            } else {
-                return node;
             }
-            break;
+            return node;
           case TOK_NOT:
             right = this.expression(bindingPower.Not);
             return {type: "NotExpression", children: [right]};
@@ -15405,10 +16937,8 @@ module.exports = AWS.Signers.V3;
                 right = this._parseProjectionRHS(bindingPower.Star);
                 return {type: "Projection",
                         children: [{type: "Identity"}, right]};
-            } else {
-                return this._parseMultiselectList();
             }
-            break;
+            return this._parseMultiselectList();
           case TOK_CURRENT:
             return {type: TOK_CURRENT};
           case TOK_EXPREF:
@@ -15440,13 +16970,11 @@ module.exports = AWS.Signers.V3;
             if (this._lookahead(0) !== TOK_STAR) {
                 right = this._parseDotRHS(rbp);
                 return {type: "Subexpression", children: [left, right]};
-            } else {
-                // Creating a projection.
-                this._advance();
-                right = this._parseProjectionRHS(rbp);
-                return {type: "ValueProjection", children: [left, right]};
             }
-            break;
+            // Creating a projection.
+            this._advance();
+            right = this._parseProjectionRHS(rbp);
+            return {type: "ValueProjection", children: [left, right]};
           case TOK_PIPE:
             right = this.expression(bindingPower.Pipe);
             return {type: TOK_PIPE, children: [left, right]};
@@ -15500,13 +17028,11 @@ module.exports = AWS.Signers.V3;
             if (token.type === TOK_NUMBER || token.type === TOK_COLON) {
                 right = this._parseIndexExpression();
                 return this._projectIfSlice(left, right);
-            } else {
-                this._match(TOK_STAR);
-                this._match(TOK_RBRACKET);
-                right = this._parseProjectionRHS(bindingPower.Star);
-                return {type: "Projection", children: [left, right]};
             }
-            break;
+            this._match(TOK_STAR);
+            this._match(TOK_RBRACKET);
+            right = this._parseProjectionRHS(bindingPower.Star);
+            return {type: "Projection", children: [left, right]};
           default:
             this._errorToken(this._lookaheadToken(0));
         }
@@ -15683,19 +17209,15 @@ module.exports = AWS.Signers.V3;
           var matched, current, result, first, second, field, left, right, collected, i;
           switch (node.type) {
             case "Field":
-              if (value === null ) {
-                  return null;
-              } else if (isObject(value)) {
+              if (value !== null && isObject(value)) {
                   field = value[node.name];
                   if (field === undefined) {
                       return null;
                   } else {
                       return field;
                   }
-              } else {
-                return null;
               }
-              break;
+              return null;
             case "Subexpression":
               result = this.visit(node.children[0], value);
               for (i = 1; i < node.children.length; i++) {
@@ -16066,11 +17588,16 @@ module.exports = AWS.Signers.V3;
                 }
             }
             if (!typeMatched) {
+                var expected = currentSpec
+                    .map(function(typeIdentifier) {
+                        return TYPE_NAME_TABLE[typeIdentifier];
+                    })
+                    .join(',');
                 throw new Error("TypeError: " + name + "() " +
                                 "expected argument " + (i + 1) +
-                                " to be type " + currentSpec +
-                                " but received type " + actualType +
-                                " instead.");
+                                " to be type " + expected +
+                                " but received type " +
+                                TYPE_NAME_TABLE[actualType] + " instead.");
             }
         }
     },
@@ -17777,7 +19304,7 @@ AWS.util.update(AWS.STS.prototype, {
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
 var util = __webpack_require__(395).util;
-var Transform = __webpack_require__(413).Transform;
+var Transform = __webpack_require__(794).Transform;
 var allocBuffer = util.buffer.alloc;
 
 /** @type {Transform} */
@@ -17906,7 +19433,7 @@ module.exports = {
 
 var AWS = __webpack_require__(395);
 var fs = __webpack_require__(747);
-var STS = __webpack_require__(733);
+var STS = __webpack_require__(106);
 var iniLoader = AWS.util.iniLoader;
 
 /**
@@ -18210,13 +19737,6 @@ AWS.EnvironmentCredentials = AWS.util.inherit(AWS.Credentials, {
 
 });
 
-
-/***/ }),
-
-/***/ 876:
-/***/ (function(module) {
-
-module.exports = require("http");
 
 /***/ }),
 
@@ -18650,7 +20170,7 @@ AWS.NodeHttpClient = AWS.util.inherit({
     }
 
     var useSSL = endpoint.protocol === 'https:';
-    var http = useSSL ? __webpack_require__(211) : __webpack_require__(876);
+    var http = useSSL ? __webpack_require__(211) : __webpack_require__(605);
     var options = {
       host: endpoint.hostname,
       port: endpoint.port,
@@ -18776,7 +20296,7 @@ AWS.NodeHttpClient = AWS.util.inherit({
    * Create the https.Agent or http.Agent according to the request schema.
    */
   getAgent: function getAgent(useSSL, agentOptions) {
-    var http = useSSL ? __webpack_require__(211) : __webpack_require__(876);
+    var http = useSSL ? __webpack_require__(211) : __webpack_require__(605);
     if (useSSL) {
       if (!AWS.NodeHttpClient.sslAgent) {
         AWS.NodeHttpClient.sslAgent = new http.Agent(AWS.util.merge({
@@ -19128,6 +20648,7 @@ AWS.CredentialProviderChain = AWS.util.inherit(AWS.Credentials, {
  * AWS.CredentialProviderChain.defaultProviders = [
  *   function () { return new AWS.EnvironmentCredentials('AWS'); },
  *   function () { return new AWS.EnvironmentCredentials('AMAZON'); },
+ *   function () { return new AWS.SsoCredentials(); },
  *   function () { return new AWS.SharedIniFileCredentials(); },
  *   function () { return new AWS.ECSCredentials(); },
  *   function () { return new AWS.ProcessCredentials(); },
@@ -19788,6 +21309,71 @@ module.exports = {
 
 /***/ }),
 
+/***/ 950:
+/***/ (function(__unusedmodule, exports) {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", { value: true });
+function getProxyUrl(reqUrl) {
+    let usingSsl = reqUrl.protocol === 'https:';
+    let proxyUrl;
+    if (checkBypass(reqUrl)) {
+        return proxyUrl;
+    }
+    let proxyVar;
+    if (usingSsl) {
+        proxyVar = process.env['https_proxy'] || process.env['HTTPS_PROXY'];
+    }
+    else {
+        proxyVar = process.env['http_proxy'] || process.env['HTTP_PROXY'];
+    }
+    if (proxyVar) {
+        proxyUrl = new URL(proxyVar);
+    }
+    return proxyUrl;
+}
+exports.getProxyUrl = getProxyUrl;
+function checkBypass(reqUrl) {
+    if (!reqUrl.hostname) {
+        return false;
+    }
+    let noProxy = process.env['no_proxy'] || process.env['NO_PROXY'] || '';
+    if (!noProxy) {
+        return false;
+    }
+    // Determine the request port
+    let reqPort;
+    if (reqUrl.port) {
+        reqPort = Number(reqUrl.port);
+    }
+    else if (reqUrl.protocol === 'http:') {
+        reqPort = 80;
+    }
+    else if (reqUrl.protocol === 'https:') {
+        reqPort = 443;
+    }
+    // Format the request hostname and hostname with port
+    let upperReqHosts = [reqUrl.hostname.toUpperCase()];
+    if (typeof reqPort === 'number') {
+        upperReqHosts.push(`${upperReqHosts[0]}:${reqPort}`);
+    }
+    // Compare request host against noproxy
+    for (let upperNoProxyItem of noProxy
+        .split(',')
+        .map(x => x.trim().toUpperCase())
+        .filter(x => x)) {
+        if (upperReqHosts.some(x => x === upperNoProxyItem)) {
+            return true;
+        }
+    }
+    return false;
+}
+exports.checkBypass = checkBypass;
+
+
+/***/ }),
+
 /***/ 951:
 /***/ (function(module, __unusedexports, __webpack_require__) {
 
@@ -19942,7 +21528,12 @@ function Operation(name, operation, options) {
       (operation.endpointdiscovery.required ? 'REQUIRED' : 'OPTIONAL') :
     'NULL'
   );
-  property(this, 'httpChecksumRequired', operation.httpChecksumRequired, false);
+
+  // httpChecksum replaces usage of httpChecksumRequired, but some APIs
+  // (s3control) still uses old trait.
+  var httpChecksumRequired = operation.httpChecksumRequired
+    || (operation.httpChecksum && operation.httpChecksum.requestChecksumRequired);
+  property(this, 'httpChecksumRequired', httpChecksumRequired, false);
 
   memoizedProperty(this, 'input', function() {
     if (!operation.input) {
@@ -20065,7 +21656,7 @@ module.exports = {
 /***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
 
 var AWS = __webpack_require__(395);
-var STS = __webpack_require__(733);
+var STS = __webpack_require__(106);
 
 /**
  * Represents credentials retrieved from STS SAML support.
@@ -20218,8 +21809,9 @@ AWS.ParamValidator = AWS.util.inherit({
   },
 
   validateStructure: function validateStructure(shape, params, context) {
-    this.validateType(params, context, ['object'], 'structure');
+    if (shape.isDocument) return true;
 
+    this.validateType(params, context, ['object'], 'structure');
     var paramName;
     for (var i = 0; shape.required && i < shape.required.length; i++) {
       paramName = shape.required[i];
