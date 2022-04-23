@@ -80,7 +80,9 @@ async function run(): Promise<void> {
       throw new Error(`Deploy ${status}!`)
     }
   } catch (error) {
-    core.setFailed(error.message)
+    if (error instanceof Error) {
+      core.setFailed(error.message)
+    }
   }
 }
 
