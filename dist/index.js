@@ -913,13 +913,14 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.issueCommand = void 0;
+exports.prepareKeyValueMessage = exports.issueFileCommand = void 0;
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const fs = __importStar(__webpack_require__(747));
 const os = __importStar(__webpack_require__(87));
+const uuid_1 = __webpack_require__(25);
 const utils_1 = __webpack_require__(82);
-function issueCommand(command, message) {
+function issueFileCommand(command, message) {
     const filePath = process.env[`GITHUB_${command}`];
     if (!filePath) {
         throw new Error(`Unable to find environment variable for file command ${command}`);
@@ -931,7 +932,22 @@ function issueCommand(command, message) {
         encoding: 'utf8'
     });
 }
-exports.issueCommand = issueCommand;
+exports.issueFileCommand = issueFileCommand;
+function prepareKeyValueMessage(key, value) {
+    const delimiter = `ghadelimiter_${uuid_1.v4()}`;
+    const convertedValue = utils_1.toCommandValue(value);
+    // These should realistically never happen, but just in case someone finds a
+    // way to exploit uuid generation let's not allow keys or values that contain
+    // the delimiter.
+    if (key.includes(delimiter)) {
+        throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
+    }
+    if (convertedValue.includes(delimiter)) {
+        throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
+    }
+    return `${key}<<${delimiter}${os.EOL}${convertedValue}${os.EOL}${delimiter}`;
+}
+exports.prepareKeyValueMessage = prepareKeyValueMessage;
 //# sourceMappingURL=file-command.js.map
 
 /***/ }),
@@ -1136,7 +1152,7 @@ module.exports = AWS.STS;
 /***/ 108:
 /***/ (function(module) {
 
-module.exports = {"rules":{"*/*":{"endpoint":"{service}.{region}.amazonaws.com"},"cn-*/*":{"endpoint":"{service}.{region}.amazonaws.com.cn"},"us-iso-*/*":"usIso","us-isob-*/*":"usIsob","*/budgets":"globalSSL","*/cloudfront":"globalSSL","*/sts":"globalSSL","*/importexport":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2","globalEndpoint":true},"*/route53":"globalSSL","cn-*/route53":{"endpoint":"{service}.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-northwest-1"},"us-gov-*/route53":"globalGovCloud","us-iso-*/route53":{"endpoint":"{service}.c2s.ic.gov","globalEndpoint":true,"signingRegion":"us-iso-east-1"},"us-isob-*/route53":{"endpoint":"{service}.sc2s.sgov.gov","globalEndpoint":true,"signingRegion":"us-isob-east-1"},"*/waf":"globalSSL","*/iam":"globalSSL","cn-*/iam":{"endpoint":"{service}.cn-north-1.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-north-1"},"us-gov-*/iam":"globalGovCloud","us-gov-*/sts":{"endpoint":"{service}.{region}.amazonaws.com"},"us-gov-west-1/s3":"s3signature","us-west-1/s3":"s3signature","us-west-2/s3":"s3signature","eu-west-1/s3":"s3signature","ap-southeast-1/s3":"s3signature","ap-southeast-2/s3":"s3signature","ap-northeast-1/s3":"s3signature","sa-east-1/s3":"s3signature","us-east-1/s3":{"endpoint":"{service}.amazonaws.com","signatureVersion":"s3"},"us-east-1/sdb":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2"},"*/sdb":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"v2"}},"fipsRules":{"*/*":"fipsStandard","us-gov-*/*":"fipsStandard","us-iso-*/*":{"endpoint":"{service}-fips.{region}.c2s.ic.gov"},"us-iso-*/dms":"usIso","us-isob-*/*":{"endpoint":"{service}-fips.{region}.sc2s.sgov.gov"},"us-isob-*/dms":"usIsob","cn-*/*":{"endpoint":"{service}-fips.{region}.amazonaws.com.cn"},"*/api.ecr":"fips.api.ecr","*/api.sagemaker":"fips.api.sagemaker","*/batch":"fipsDotPrefix","*/eks":"fipsDotPrefix","*/models.lex":"fips.models.lex","*/runtime.lex":"fips.runtime.lex","*/runtime.sagemaker":{"endpoint":"runtime-fips.sagemaker.{region}.amazonaws.com"},"*/iam":"fipsWithoutRegion","*/route53":"fipsWithoutRegion","*/transcribe":"fipsDotPrefix","*/waf":"fipsWithoutRegion","us-gov-*/transcribe":"fipsDotPrefix","us-gov-*/api.ecr":"fips.api.ecr","us-gov-*/api.sagemaker":"fips.api.sagemaker","us-gov-*/models.lex":"fips.models.lex","us-gov-*/runtime.lex":"fips.runtime.lex","us-gov-*/acm-pca":"fipsWithServiceOnly","us-gov-*/batch":"fipsWithServiceOnly","us-gov-*/config":"fipsWithServiceOnly","us-gov-*/eks":"fipsWithServiceOnly","us-gov-*/elasticmapreduce":"fipsWithServiceOnly","us-gov-*/identitystore":"fipsWithServiceOnly","us-gov-*/dynamodb":"fipsWithServiceOnly","us-gov-*/elasticloadbalancing":"fipsWithServiceOnly","us-gov-*/guardduty":"fipsWithServiceOnly","us-gov-*/monitoring":"fipsWithServiceOnly","us-gov-*/resource-groups":"fipsWithServiceOnly","us-gov-*/runtime.sagemaker":"fipsWithServiceOnly","us-gov-*/servicecatalog-appregistry":"fipsWithServiceOnly","us-gov-*/servicequotas":"fipsWithServiceOnly","us-gov-*/ssm":"fipsWithServiceOnly","us-gov-*/sts":"fipsWithServiceOnly","us-gov-*/support":"fipsWithServiceOnly","us-gov-west-1/states":"fipsWithServiceOnly","us-iso-east-1/elasticfilesystem":{"endpoint":"elasticfilesystem-fips.{region}.c2s.ic.gov"},"us-gov-west-1/organizations":"fipsWithServiceOnly","us-gov-west-1/route53":{"endpoint":"route53.us-gov.amazonaws.com"}},"dualstackRules":{"*/*":{"endpoint":"{service}.{region}.api.aws"},"cn-*/*":{"endpoint":"{service}.{region}.api.amazonwebservices.com.cn"},"*/s3":"dualstackLegacy","cn-*/s3":"dualstackLegacyCn","*/s3-control":"dualstackLegacy","cn-*/s3-control":"dualstackLegacyCn","ap-south-1/ec2":"dualstackLegacyEc2","eu-west-1/ec2":"dualstackLegacyEc2","sa-east-1/ec2":"dualstackLegacyEc2","us-east-1/ec2":"dualstackLegacyEc2","us-east-2/ec2":"dualstackLegacyEc2","us-west-2/ec2":"dualstackLegacyEc2"},"dualstackFipsRules":{"*/*":{"endpoint":"{service}-fips.{region}.api.aws"},"cn-*/*":{"endpoint":"{service}-fips.{region}.api.amazonwebservices.com.cn"},"*/s3":"dualstackFipsLegacy","cn-*/s3":"dualstackFipsLegacyCn","*/s3-control":"dualstackFipsLegacy","cn-*/s3-control":"dualstackFipsLegacyCn"},"patterns":{"globalSSL":{"endpoint":"https://{service}.amazonaws.com","globalEndpoint":true,"signingRegion":"us-east-1"},"globalGovCloud":{"endpoint":"{service}.us-gov.amazonaws.com","globalEndpoint":true,"signingRegion":"us-gov-west-1"},"s3signature":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"s3"},"usIso":{"endpoint":"{service}.{region}.c2s.ic.gov"},"usIsob":{"endpoint":"{service}.{region}.sc2s.sgov.gov"},"fipsStandard":{"endpoint":"{service}-fips.{region}.amazonaws.com"},"fipsDotPrefix":{"endpoint":"fips.{service}.{region}.amazonaws.com"},"fipsWithoutRegion":{"endpoint":"{service}-fips.amazonaws.com"},"fips.api.ecr":{"endpoint":"ecr-fips.{region}.amazonaws.com"},"fips.api.sagemaker":{"endpoint":"api-fips.sagemaker.{region}.amazonaws.com"},"fips.models.lex":{"endpoint":"models-fips.lex.{region}.amazonaws.com"},"fips.runtime.lex":{"endpoint":"runtime-fips.lex.{region}.amazonaws.com"},"fipsWithServiceOnly":{"endpoint":"{service}.{region}.amazonaws.com"},"dualstackLegacy":{"endpoint":"{service}.dualstack.{region}.amazonaws.com"},"dualstackLegacyCn":{"endpoint":"{service}.dualstack.{region}.amazonaws.com.cn"},"dualstackFipsLegacy":{"endpoint":"{service}-fips.dualstack.{region}.amazonaws.com"},"dualstackFipsLegacyCn":{"endpoint":"{service}-fips.dualstack.{region}.amazonaws.com.cn"},"dualstackLegacyEc2":{"endpoint":"api.ec2.{region}.aws"}}};
+module.exports = {"rules":{"*/*":{"endpoint":"{service}.{region}.amazonaws.com"},"cn-*/*":{"endpoint":"{service}.{region}.amazonaws.com.cn"},"us-iso-*/*":"usIso","us-isob-*/*":"usIsob","*/budgets":"globalSSL","*/cloudfront":"globalSSL","*/sts":"globalSSL","*/importexport":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2","globalEndpoint":true},"*/route53":"globalSSL","cn-*/route53":{"endpoint":"{service}.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-northwest-1"},"us-gov-*/route53":"globalGovCloud","us-iso-*/route53":{"endpoint":"{service}.c2s.ic.gov","globalEndpoint":true,"signingRegion":"us-iso-east-1"},"us-isob-*/route53":{"endpoint":"{service}.sc2s.sgov.gov","globalEndpoint":true,"signingRegion":"us-isob-east-1"},"*/waf":"globalSSL","*/iam":"globalSSL","cn-*/iam":{"endpoint":"{service}.cn-north-1.amazonaws.com.cn","globalEndpoint":true,"signingRegion":"cn-north-1"},"us-gov-*/iam":"globalGovCloud","us-gov-*/sts":{"endpoint":"{service}.{region}.amazonaws.com"},"us-gov-west-1/s3":"s3signature","us-west-1/s3":"s3signature","us-west-2/s3":"s3signature","eu-west-1/s3":"s3signature","ap-southeast-1/s3":"s3signature","ap-southeast-2/s3":"s3signature","ap-northeast-1/s3":"s3signature","sa-east-1/s3":"s3signature","us-east-1/s3":{"endpoint":"{service}.amazonaws.com","signatureVersion":"s3"},"us-east-1/sdb":{"endpoint":"{service}.amazonaws.com","signatureVersion":"v2"},"*/sdb":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"v2"},"*/resource-explorer-2":"dualstackByDefault","*/kendra-ranking":"dualstackByDefault","*/codecatalyst":"globalDualstackByDefault"},"fipsRules":{"*/*":"fipsStandard","us-gov-*/*":"fipsStandard","us-iso-*/*":{"endpoint":"{service}-fips.{region}.c2s.ic.gov"},"us-iso-*/dms":"usIso","us-isob-*/*":{"endpoint":"{service}-fips.{region}.sc2s.sgov.gov"},"us-isob-*/dms":"usIsob","cn-*/*":{"endpoint":"{service}-fips.{region}.amazonaws.com.cn"},"*/api.ecr":"fips.api.ecr","*/api.sagemaker":"fips.api.sagemaker","*/batch":"fipsDotPrefix","*/eks":"fipsDotPrefix","*/models.lex":"fips.models.lex","*/runtime.lex":"fips.runtime.lex","*/runtime.sagemaker":{"endpoint":"runtime-fips.sagemaker.{region}.amazonaws.com"},"*/iam":"fipsWithoutRegion","*/route53":"fipsWithoutRegion","*/transcribe":"fipsDotPrefix","*/waf":"fipsWithoutRegion","us-gov-*/transcribe":"fipsDotPrefix","us-gov-*/api.ecr":"fips.api.ecr","us-gov-*/api.sagemaker":"fips.api.sagemaker","us-gov-*/models.lex":"fips.models.lex","us-gov-*/runtime.lex":"fips.runtime.lex","us-gov-*/acm-pca":"fipsWithServiceOnly","us-gov-*/batch":"fipsWithServiceOnly","us-gov-*/cloudformation":"fipsWithServiceOnly","us-gov-*/config":"fipsWithServiceOnly","us-gov-*/eks":"fipsWithServiceOnly","us-gov-*/elasticmapreduce":"fipsWithServiceOnly","us-gov-*/identitystore":"fipsWithServiceOnly","us-gov-*/dynamodb":"fipsWithServiceOnly","us-gov-*/elasticloadbalancing":"fipsWithServiceOnly","us-gov-*/guardduty":"fipsWithServiceOnly","us-gov-*/monitoring":"fipsWithServiceOnly","us-gov-*/resource-groups":"fipsWithServiceOnly","us-gov-*/runtime.sagemaker":"fipsWithServiceOnly","us-gov-*/servicecatalog-appregistry":"fipsWithServiceOnly","us-gov-*/servicequotas":"fipsWithServiceOnly","us-gov-*/ssm":"fipsWithServiceOnly","us-gov-*/sts":"fipsWithServiceOnly","us-gov-*/support":"fipsWithServiceOnly","us-gov-west-1/states":"fipsWithServiceOnly","us-iso-east-1/elasticfilesystem":{"endpoint":"elasticfilesystem-fips.{region}.c2s.ic.gov"},"us-gov-west-1/organizations":"fipsWithServiceOnly","us-gov-west-1/route53":{"endpoint":"route53.us-gov.amazonaws.com"},"*/resource-explorer-2":"fipsDualstackByDefault","*/kendra-ranking":"dualstackByDefault","*/codecatalyst":"fipsGlobalDualstackByDefault"},"dualstackRules":{"*/*":{"endpoint":"{service}.{region}.api.aws"},"cn-*/*":{"endpoint":"{service}.{region}.api.amazonwebservices.com.cn"},"*/s3":"dualstackLegacy","cn-*/s3":"dualstackLegacyCn","*/s3-control":"dualstackLegacy","cn-*/s3-control":"dualstackLegacyCn","ap-south-1/ec2":"dualstackLegacyEc2","eu-west-1/ec2":"dualstackLegacyEc2","sa-east-1/ec2":"dualstackLegacyEc2","us-east-1/ec2":"dualstackLegacyEc2","us-east-2/ec2":"dualstackLegacyEc2","us-west-2/ec2":"dualstackLegacyEc2"},"dualstackFipsRules":{"*/*":{"endpoint":"{service}-fips.{region}.api.aws"},"cn-*/*":{"endpoint":"{service}-fips.{region}.api.amazonwebservices.com.cn"},"*/s3":"dualstackFipsLegacy","cn-*/s3":"dualstackFipsLegacyCn","*/s3-control":"dualstackFipsLegacy","cn-*/s3-control":"dualstackFipsLegacyCn"},"patterns":{"globalSSL":{"endpoint":"https://{service}.amazonaws.com","globalEndpoint":true,"signingRegion":"us-east-1"},"globalGovCloud":{"endpoint":"{service}.us-gov.amazonaws.com","globalEndpoint":true,"signingRegion":"us-gov-west-1"},"s3signature":{"endpoint":"{service}.{region}.amazonaws.com","signatureVersion":"s3"},"usIso":{"endpoint":"{service}.{region}.c2s.ic.gov"},"usIsob":{"endpoint":"{service}.{region}.sc2s.sgov.gov"},"fipsStandard":{"endpoint":"{service}-fips.{region}.amazonaws.com"},"fipsDotPrefix":{"endpoint":"fips.{service}.{region}.amazonaws.com"},"fipsWithoutRegion":{"endpoint":"{service}-fips.amazonaws.com"},"fips.api.ecr":{"endpoint":"ecr-fips.{region}.amazonaws.com"},"fips.api.sagemaker":{"endpoint":"api-fips.sagemaker.{region}.amazonaws.com"},"fips.models.lex":{"endpoint":"models-fips.lex.{region}.amazonaws.com"},"fips.runtime.lex":{"endpoint":"runtime-fips.lex.{region}.amazonaws.com"},"fipsWithServiceOnly":{"endpoint":"{service}.{region}.amazonaws.com"},"dualstackLegacy":{"endpoint":"{service}.dualstack.{region}.amazonaws.com"},"dualstackLegacyCn":{"endpoint":"{service}.dualstack.{region}.amazonaws.com.cn"},"dualstackFipsLegacy":{"endpoint":"{service}-fips.dualstack.{region}.amazonaws.com"},"dualstackFipsLegacyCn":{"endpoint":"{service}-fips.dualstack.{region}.amazonaws.com.cn"},"dualstackLegacyEc2":{"endpoint":"api.ec2.{region}.aws"},"dualstackByDefault":{"endpoint":"{service}.{region}.api.aws"},"fipsDualstackByDefault":{"endpoint":"{service}-fips.{region}.api.aws"},"globalDualstackByDefault":{"endpoint":"{service}.global.api.aws"},"fipsGlobalDualstackByDefault":{"endpoint":"{service}-fips.global.api.aws"}}};
 
 /***/ }),
 
@@ -1156,11 +1172,22 @@ var iniLoader = AWS.util.iniLoader;
  *
  * The credentials file must specify the information below to use sso:
  *
- *     [default]
+ *     [profile sso-profile]
  *     sso_account_id = 012345678901
- *     sso_region = us-east-1
+ *     sso_region = **-****-*
  *     sso_role_name = SampleRole
- *     sso_start_url = https://d-abc123.awsapps.com/start
+ *     sso_start_url = https://d-******.awsapps.com/start
+ *
+ * or using the session format:
+ *
+ *     [profile sso-token]
+ *     sso_session = prod
+ *     sso_account_id = 012345678901
+ *     sso_role_name = SampleRole
+ *
+ *     [sso-session prod]
+ *     sso_region = **-****-*
+ *     sso_start_url = https://d-******.awsapps.com/start
  *
  * This information will be automatically added to your shared credentials file by running
  * `aws configure sso`.
@@ -1205,6 +1232,7 @@ AWS.SsoCredentials = AWS.util.inherit(AWS.Credentials, {
     this.filename = options.filename;
     this.profile = options.profile || process.env.AWS_PROFILE || AWS.util.defaultProfile;
     this.service = options.ssoClient;
+    this.httpOptions = options.httpOptions || null;
     this.get(options.callback || AWS.util.fn.noop);
   },
 
@@ -1212,14 +1240,8 @@ AWS.SsoCredentials = AWS.util.inherit(AWS.Credentials, {
    * @api private
    */
   load: function load(callback) {
-    /**
-     * The time window (15 mins) that SDK will treat the SSO token expires in before the defined expiration date in token.
-     * This is needed because server side may have invalidated the token before the defined expiration date.
-     *
-     * @internal
-     */
-    var EXPIRE_WINDOW_MS = 15 * 60 * 1000;
     var self = this;
+
     try {
       var profiles = AWS.util.getProfilesFromSharedConfig(iniLoader, this.filename);
       var profile = profiles[this.profile] || {};
@@ -1231,17 +1253,107 @@ AWS.SsoCredentials = AWS.util.inherit(AWS.Credentials, {
         );
       }
 
-      if (!profile.sso_start_url || !profile.sso_account_id || !profile.sso_region || !profile.sso_role_name) {
-        throw AWS.util.error(
-          new Error('Profile ' + this.profile + ' does not have valid SSO credentials. Required parameters "sso_account_id", "sso_region", ' +
-          '"sso_role_name", "sso_start_url". Reference: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html'),
-          { code: self.errorCode }
-        );
+      if (profile.sso_session) {
+        if (!profile.sso_account_id || !profile.sso_role_name) {
+          throw AWS.util.error(
+            new Error('Profile ' + this.profile + ' with session ' + profile.sso_session +
+              ' does not have valid SSO credentials. Required parameters "sso_account_id", "sso_session", ' +
+              '"sso_role_name". Reference: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html'),
+            { code: self.errorCode }
+          );
+        }
+      } else {
+        if (!profile.sso_start_url || !profile.sso_account_id || !profile.sso_region || !profile.sso_role_name) {
+          throw AWS.util.error(
+            new Error('Profile ' + this.profile + ' does not have valid SSO credentials. Required parameters "sso_account_id", "sso_region", ' +
+            '"sso_role_name", "sso_start_url". Reference: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html'),
+            { code: self.errorCode }
+          );
+        }
       }
 
+      this.getToken(this.profile, profile, function (err, token) {
+        if (err) {
+          return callback(err);
+        }
+        var request = {
+          accessToken: token,
+          accountId: profile.sso_account_id,
+          roleName: profile.sso_role_name,
+        };
+
+        if (!self.service || self.service.config.region !== profile.sso_region) {
+          self.service = new AWS.SSO({
+            region: profile.sso_region,
+            httpOptions: self.httpOptions,
+          });
+        }
+
+        self.service.getRoleCredentials(request, function(err, data) {
+          if (err || !data || !data.roleCredentials) {
+            callback(AWS.util.error(
+              err || new Error('Please log in using "aws sso login"'),
+              { code: self.errorCode }
+            ), null);
+          } else if (!data.roleCredentials.accessKeyId || !data.roleCredentials.secretAccessKey || !data.roleCredentials.sessionToken || !data.roleCredentials.expiration) {
+            throw AWS.util.error(new Error(
+              'SSO returns an invalid temporary credential.'
+            ));
+          } else {
+            self.expired = false;
+            self.accessKeyId = data.roleCredentials.accessKeyId;
+            self.secretAccessKey = data.roleCredentials.secretAccessKey;
+            self.sessionToken = data.roleCredentials.sessionToken;
+            self.expireTime = new Date(data.roleCredentials.expiration);
+            callback(null);
+          }
+        });
+      });
+    } catch (err) {
+      callback(err);
+    }
+  },
+
+  /**
+   * @private
+   * Uses legacy file system retrieval or if sso-session is set,
+   * use the SSOTokenProvider.
+   *
+   * @param {string} profileName - name of the profile.
+   * @param {object} profile - profile data containing sso_session or sso_start_url etc.
+   * @param {function} callback - called with (err, (string) token).
+   *
+   * @returns {void}
+   */
+  getToken: function getToken(profileName, profile, callback) {
+    var self = this;
+
+    if (profile.sso_session) {
+      var _iniLoader = AWS.util.iniLoader;
+      var ssoSessions = _iniLoader.loadSsoSessionsFrom();
+      var ssoSession = ssoSessions[profile.sso_session];
+      Object.assign(profile, ssoSession);
+
+      var ssoTokenProvider = new AWS.SSOTokenProvider({
+        profile: profileName,
+      });
+      ssoTokenProvider.load(function (err) {
+        if (err) {
+          return callback(err);
+        }
+        return callback(null, ssoTokenProvider.token);
+      });
+      return;
+    }
+
+    try {
+      /**
+       * The time window (15 mins) that SDK will treat the SSO token expires in before the defined expiration date in token.
+       * This is needed because server side may have invalidated the token before the defined expiration date.
+       */
+      var EXPIRE_WINDOW_MS = 15 * 60 * 1000;
       var hasher = crypto.createHash('sha1');
       var fileName = hasher.update(profile.sso_start_url).digest('hex') + '.json';
-
       var cachePath = path.join(
         iniLoader.getHomeDir(),
         '.aws',
@@ -1254,7 +1366,6 @@ AWS.SsoCredentials = AWS.util.inherit(AWS.Credentials, {
       if (cacheFile) {
         cacheContent = JSON.parse(cacheFile);
       }
-
       if (!cacheContent) {
         throw AWS.util.error(
           new Error('Cached credentials not found under ' + this.profile + ' profile. Please make sure you log in with aws sso login first'),
@@ -1274,35 +1385,9 @@ AWS.SsoCredentials = AWS.util.inherit(AWS.Credentials, {
         ));
       }
 
-      if (!self.service || self.service.config.region !== profile.sso_region) {
-        self.service = new AWS.SSO({ region: profile.sso_region });
-      }
-      var request = {
-        accessToken: cacheContent.accessToken,
-        accountId: profile.sso_account_id,
-        roleName: profile.sso_role_name,
-      };
-      self.service.getRoleCredentials(request, function(err, data) {
-        if (err || !data || !data.roleCredentials) {
-          callback(AWS.util.error(
-            err || new Error('Please log in using "aws sso login"'),
-            { code: self.errorCode }
-          ), null);
-        } else if (!data.roleCredentials.accessKeyId || !data.roleCredentials.secretAccessKey || !data.roleCredentials.sessionToken || !data.roleCredentials.expiration) {
-          throw AWS.util.error(new Error(
-            'SSO returns an invalid temporary credential.'
-          ));
-        } else {
-          self.expired = false;
-          self.accessKeyId = data.roleCredentials.accessKeyId;
-          self.secretAccessKey = data.roleCredentials.secretAccessKey;
-          self.sessionToken = data.roleCredentials.sessionToken;
-          self.expireTime = new Date(data.roleCredentials.expiration);
-          callback(null);
-        }
-      });
+      return callback(null, cacheContent.accessToken);
     } catch (err) {
-      callback(err);
+      return callback(err, null);
     }
   },
 
@@ -1322,6 +1407,178 @@ AWS.SsoCredentials = AWS.util.inherit(AWS.Credentials, {
     this.coalesceRefresh(callback || AWS.util.fn.callback);
   },
 });
+
+
+/***/ }),
+
+/***/ 115:
+/***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
+
+var AWS = __webpack_require__(395);
+
+/**
+ * Creates a token provider chain that searches for token in a list of
+ * token providers specified by the {providers} property.
+ *
+ * By default, the chain will use the {defaultProviders} to resolve token.
+ *
+ * ## Setting Providers
+ *
+ * Each provider in the {providers} list should be a function that returns
+ * a {AWS.Token} object, or a hardcoded token object. The function
+ * form allows for delayed execution of the Token construction.
+ *
+ * ## Resolving Token from a Chain
+ *
+ * Call {resolve} to return the first valid token object that can be
+ * loaded by the provider chain.
+ *
+ * For example, to resolve a chain with a custom provider that checks a file
+ * on disk after the set of {defaultProviders}:
+ *
+ * ```javascript
+ * var diskProvider = new FileTokenProvider('./token.json');
+ * var chain = new AWS.TokenProviderChain();
+ * chain.providers.push(diskProvider);
+ * chain.resolve();
+ * ```
+ *
+ * The above code will return the `diskProvider` object if the
+ * file contains token and the `defaultProviders` do not contain
+ * any token.
+ *
+ * @!attribute providers
+ *   @return [Array<AWS.Token, Function>]
+ *     a list of token objects or functions that return token
+ *     objects. If the provider is a function, the function will be
+ *     executed lazily when the provider needs to be checked for valid
+ *     token. By default, this object will be set to the {defaultProviders}.
+ *   @see defaultProviders
+ */
+AWS.TokenProviderChain = AWS.util.inherit(AWS.Token, {
+
+  /**
+   * Creates a new TokenProviderChain with a default set of providers
+   * specified by {defaultProviders}.
+   */
+  constructor: function TokenProviderChain(providers) {
+    if (providers) {
+      this.providers = providers;
+    } else {
+      this.providers = AWS.TokenProviderChain.defaultProviders.slice(0);
+    }
+    this.resolveCallbacks = [];
+  },
+
+  /**
+   * @!method  resolvePromise()
+   *   Returns a 'thenable' promise.
+   *   Resolves the provider chain by searching for the first token in {providers}.
+   *
+   *   Two callbacks can be provided to the `then` method on the returned promise.
+   *   The first callback will be called if the promise is fulfilled, and the second
+   *   callback will be called if the promise is rejected.
+   *   @callback fulfilledCallback function(token)
+   *     Called if the promise is fulfilled and the provider resolves the chain
+   *     to a token object
+   *     @param token [AWS.Token] the token object resolved by the provider chain.
+   *   @callback rejectedCallback function(error)
+   *     Called if the promise is rejected.
+   *     @param err [Error] the error object returned if no token is found.
+   *   @return [Promise] A promise that represents the state of the `resolve` method call.
+   *   @example Calling the `resolvePromise` method.
+   *     var promise = chain.resolvePromise();
+   *     promise.then(function(token) { ... }, function(err) { ... });
+   */
+
+  /**
+   * Resolves the provider chain by searching for the first token in {providers}.
+   *
+   * @callback callback function(err, token)
+   *   Called when the provider resolves the chain to a token object
+   *   or null if no token can be found.
+   *
+   *   @param err [Error] the error object returned if no token is found.
+   *   @param token [AWS.Token] the token object resolved by the provider chain.
+   * @return [AWS.TokenProviderChain] the provider, for chaining.
+   */
+  resolve: function resolve(callback) {
+    var self = this;
+    if (self.providers.length === 0) {
+      callback(new Error('No providers'));
+      return self;
+    }
+
+    if (self.resolveCallbacks.push(callback) === 1) {
+      var index = 0;
+      var providers = self.providers.slice(0);
+
+      function resolveNext(err, token) {
+        if ((!err && token) || index === providers.length) {
+          AWS.util.arrayEach(self.resolveCallbacks, function (callback) {
+            callback(err, token);
+          });
+          self.resolveCallbacks.length = 0;
+          return;
+        }
+
+        var provider = providers[index++];
+        if (typeof provider === 'function') {
+          token = provider.call();
+        } else {
+          token = provider;
+        }
+
+        if (token.get) {
+          token.get(function (getErr) {
+            resolveNext(getErr, getErr ? null : token);
+          });
+        } else {
+          resolveNext(null, token);
+        }
+      }
+
+      resolveNext();
+    }
+
+    return self;
+  }
+});
+
+/**
+ * The default set of providers used by a vanilla TokenProviderChain.
+ *
+ * In the browser:
+ *
+ * ```javascript
+ * AWS.TokenProviderChain.defaultProviders = []
+ * ```
+ *
+ * In Node.js:
+ *
+ * ```javascript
+ * AWS.TokenProviderChain.defaultProviders = [
+ *   function () { return new AWS.SSOTokenProvider(); },
+ * ]
+ * ```
+ */
+AWS.TokenProviderChain.defaultProviders = [];
+
+/**
+ * @api private
+ */
+AWS.TokenProviderChain.addPromisesToClass = function addPromisesToClass(PromiseDependency) {
+  this.prototype.resolvePromise = AWS.util.promisifyMethod('resolve', PromiseDependency);
+};
+
+/**
+ * @api private
+ */
+AWS.TokenProviderChain.deletePromisesFromClass = function deletePromisesFromClass() {
+  delete this.prototype.resolvePromise;
+};
+
+AWS.util.addPromises(AWS.TokenProviderChain);
 
 
 /***/ }),
@@ -1793,6 +2050,27 @@ if (process.env.NODE_DEBUG && /\btunnel\b/.test(process.env.NODE_DEBUG)) {
   debug = function() {};
 }
 exports.debug = debug; // for test
+
+
+/***/ }),
+
+/***/ 143:
+/***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
+
+var AWS = __webpack_require__(395);
+
+/**
+ * @api private
+ */
+AWS.Signers.Bearer = AWS.util.inherit(AWS.Signers.RequestSigner, {
+  constructor: function Bearer(request) {
+    AWS.Signers.RequestSigner.call(this, request);
+  },
+
+  addAuthorization: function addAuthorization(token) {
+    this.request.headers['Authorization'] = 'Bearer ' + token.token;
+  }
+});
 
 
 /***/ }),
@@ -2873,6 +3151,232 @@ module.exports = util;
 
 /***/ }),
 
+/***/ 154:
+/***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
+
+var AWS = __webpack_require__(395);
+
+/**
+ * Represents AWS token object, which contains {token}, and optional
+ * {expireTime}.
+ * Creating a `Token` object allows you to pass around your
+ * token to configuration and service objects.
+ *
+ * Note that this class typically does not need to be constructed manually,
+ * as the {AWS.Config} and {AWS.Service} classes both accept simple
+ * options hashes with the two keys. The token from this object will be used
+ * automatically in operations which require them.
+ *
+ * ## Expiring and Refreshing Token
+ *
+ * Occasionally token can expire in the middle of a long-running
+ * application. In this case, the SDK will automatically attempt to
+ * refresh the token from the storage location if the Token
+ * class implements the {refresh} method.
+ *
+ * If you are implementing a token storage location, you
+ * will want to create a subclass of the `Token` class and
+ * override the {refresh} method. This method allows token to be
+ * retrieved from the backing store, be it a file system, database, or
+ * some network storage. The method should reset the token attributes
+ * on the object.
+ *
+ * @!attribute token
+ *   @return [String] represents the literal token string. This will typically
+ *     be a base64 encoded string.
+ * @!attribute expireTime
+ *   @return [Date] a time when token should be considered expired. Used
+ *     in conjunction with {expired}.
+ * @!attribute expired
+ *   @return [Boolean] whether the token is expired and require a refresh. Used
+ *     in conjunction with {expireTime}.
+ */
+AWS.Token = AWS.util.inherit({
+  /**
+   * Creates a Token object with a given set of information in options hash.
+   * @option options token [String] represents the literal token string.
+   * @option options expireTime [Date] field representing the time at which
+   *   the token expires.
+   * @example Create a token object
+   *   var token = new AWS.Token({ token: 'token' });
+   */
+  constructor: function Token(options) {
+    // hide token from being displayed with util.inspect
+    AWS.util.hideProperties(this, ['token']);
+
+    this.expired = false;
+    this.expireTime = null;
+    this.refreshCallbacks = [];
+    if (arguments.length === 1) {
+      var options = arguments[0];
+      this.token = options.token;
+      this.expireTime = options.expireTime;
+    }
+  },
+
+  /**
+   * @return [Integer] the number of seconds before {expireTime} during which
+   *   the token will be considered expired.
+   */
+  expiryWindow: 15,
+
+  /**
+   * @return [Boolean] whether the Token object should call {refresh}
+   * @note Subclasses should override this method to provide custom refresh
+   *   logic.
+   */
+  needsRefresh: function needsRefresh() {
+    var currentTime = AWS.util.date.getDate().getTime();
+    var adjustedTime = new Date(currentTime + this.expiryWindow * 1000);
+
+    if (this.expireTime && adjustedTime > this.expireTime)
+      return true;
+
+    return this.expired || !this.token;
+  },
+
+  /**
+   * Gets the existing token, refreshing them if they are not yet loaded
+   * or have expired. Users should call this method before using {refresh},
+   * as this will not attempt to reload token when they are already
+   * loaded into the object.
+   *
+   * @callback callback function(err)
+   *   When this callback is called with no error, it means either token
+   *   do not need to be refreshed or refreshed token information has
+   *   been loaded into the object (as the `token` property).
+   *   @param err [Error] if an error occurred, this value will be filled
+   */
+  get: function get(callback) {
+    var self = this;
+    if (this.needsRefresh()) {
+      this.refresh(function(err) {
+        if (!err) self.expired = false; // reset expired flag
+        if (callback) callback(err);
+      });
+    } else if (callback) {
+      callback();
+    }
+  },
+
+  /**
+   * @!method  getPromise()
+   *   Returns a 'thenable' promise.
+   *   Gets the existing token, refreshing it if it's not yet loaded
+   *   or have expired. Users should call this method before using {refresh},
+   *   as this will not attempt to reload token when it's already
+   *   loaded into the object.
+   *
+   *   Two callbacks can be provided to the `then` method on the returned promise.
+   *   The first callback will be called if the promise is fulfilled, and the second
+   *   callback will be called if the promise is rejected.
+   *   @callback fulfilledCallback function()
+   *     Called if the promise is fulfilled. When this callback is called, it means
+   *     either token does not need to be refreshed or refreshed token information
+   *     has been loaded into the object (as the `token` property).
+   *   @callback rejectedCallback function(err)
+   *     Called if the promise is rejected.
+   *     @param err [Error] if an error occurred, this value will be filled.
+   *   @return [Promise] A promise that represents the state of the `get` call.
+   *   @example Calling the `getPromise` method.
+   *     var promise = tokenProvider.getPromise();
+   *     promise.then(function() { ... }, function(err) { ... });
+   */
+
+  /**
+   * @!method  refreshPromise()
+   *   Returns a 'thenable' promise.
+   *   Refreshes the token. Users should call {get} before attempting
+   *   to forcibly refresh token.
+   *
+   *   Two callbacks can be provided to the `then` method on the returned promise.
+   *   The first callback will be called if the promise is fulfilled, and the second
+   *   callback will be called if the promise is rejected.
+   *   @callback fulfilledCallback function()
+   *     Called if the promise is fulfilled. When this callback is called, it
+   *     means refreshed token information has been loaded into the object
+   *     (as the `token` property).
+   *   @callback rejectedCallback function(err)
+   *     Called if the promise is rejected.
+   *     @param err [Error] if an error occurred, this value will be filled.
+   *   @return [Promise] A promise that represents the state of the `refresh` call.
+   *   @example Calling the `refreshPromise` method.
+   *     var promise = tokenProvider.refreshPromise();
+   *     promise.then(function() { ... }, function(err) { ... });
+   */
+
+  /**
+   * Refreshes the token. Users should call {get} before attempting
+   * to forcibly refresh token.
+   *
+   * @callback callback function(err)
+   *   When this callback is called with no error, it means refreshed
+   *   token information has been loaded into the object (as the
+   *   `token` property).
+   *   @param err [Error] if an error occurred, this value will be filled
+   * @note Subclasses should override this class to reset the
+   *   {token} on the token object and then call the callback with
+   *   any error information.
+   * @see get
+   */
+  refresh: function refresh(callback) {
+    this.expired = false;
+    callback();
+  },
+
+  /**
+   * @api private
+   * @param callback
+   */
+  coalesceRefresh: function coalesceRefresh(callback, sync) {
+    var self = this;
+    if (self.refreshCallbacks.push(callback) === 1) {
+      self.load(function onLoad(err) {
+        AWS.util.arrayEach(self.refreshCallbacks, function(callback) {
+          if (sync) {
+            callback(err);
+          } else {
+            // callback could throw, so defer to ensure all callbacks are notified
+            AWS.util.defer(function () {
+              callback(err);
+            });
+          }
+        });
+        self.refreshCallbacks.length = 0;
+      });
+    }
+  },
+
+  /**
+   * @api private
+   * @param callback
+   */
+  load: function load(callback) {
+    callback();
+  }
+});
+
+/**
+ * @api private
+ */
+AWS.Token.addPromisesToClass = function addPromisesToClass(PromiseDependency) {
+  this.prototype.getPromise = AWS.util.promisifyMethod('get', PromiseDependency);
+  this.prototype.refreshPromise = AWS.util.promisifyMethod('refresh', PromiseDependency);
+};
+
+/**
+ * @api private
+ */
+AWS.Token.deletePromisesFromClass = function deletePromisesFromClass() {
+  delete this.prototype.getPromise;
+  delete this.prototype.refreshPromise;
+};
+
+AWS.util.addPromises(AWS.Token);
+
+
+/***/ }),
+
 /***/ 160:
 /***/ (function(module) {
 
@@ -3931,6 +4435,82 @@ AWS.Config = AWS.util.inherit({
   },
 
   /**
+   * Loads token from the configuration object. This is used internally
+   * by the SDK to ensure that refreshable {Token} objects are properly
+   * refreshed and loaded when sending a request. If you want to ensure that
+   * your token is loaded prior to a request, you can use this method
+   * directly to provide accurate token data stored in the object.
+   *
+   * @note If you configure the SDK with static token, the token data should
+   *   already be present in {token} attribute. This method is primarily necessary
+   *   to load token from asynchronous sources, or sources that can refresh
+   *   token periodically.
+   * @example Getting your access token
+   *   AWS.config.getToken(function(err) {
+   *     if (err) console.log(err.stack); // token not loaded
+   *     else console.log("Token:", AWS.config.token.token);
+   *   })
+   * @callback callback function(err)
+   *   Called when the {token} have been properly set on the configuration object.
+   *
+   *   @param err [Error] if this is set, token was not successfully loaded and
+   *     this error provides information why.
+   * @see token
+   */
+  getToken: function getToken(callback) {
+    var self = this;
+
+    function finish(err) {
+      callback(err, err ? null : self.token);
+    }
+
+    function tokenError(msg, err) {
+      return new AWS.util.error(err || new Error(), {
+        code: 'TokenError',
+        message: msg,
+        name: 'TokenError'
+      });
+    }
+
+    function getAsyncToken() {
+      self.token.get(function(err) {
+        if (err) {
+          var msg = 'Could not load token from ' +
+            self.token.constructor.name;
+          err = tokenError(msg, err);
+        }
+        finish(err);
+      });
+    }
+
+    function getStaticToken() {
+      var err = null;
+      if (!self.token.token) {
+        err = tokenError('Missing token');
+      }
+      finish(err);
+    }
+
+    if (self.token) {
+      if (typeof self.token.get === 'function') {
+        getAsyncToken();
+      } else { // static token
+        getStaticToken();
+      }
+    } else if (self.tokenProvider) {
+      self.tokenProvider.resolve(function(err, token) {
+        if (err) {
+          err = tokenError('Could not load token from any providers', err);
+        }
+        self.token = token;
+        finish(err);
+      });
+    } else {
+      finish(tokenError('No token to load'));
+    }
+  },
+
+  /**
    * @!group Loading and Setting Configuration Options
    */
 
@@ -4063,7 +4643,8 @@ AWS.Config = AWS.util.inherit({
     hostPrefixEnabled: true,
     stsRegionalEndpoints: 'legacy',
     useFipsEndpoint: false,
-    useDualstackEndpoint: false
+    useDualstackEndpoint: false,
+    token: null
   },
 
   /**
@@ -4676,7 +5257,7 @@ __webpack_require__(22);
 __webpack_require__(982);
 __webpack_require__(114);
 
-// Setup default chain providers
+// Setup default providers for credentials chain
 // If this changes, please update documentation for
 // AWS.CredentialProviderChain.defaultProviders in
 // credentials/credential_provider_chain.js
@@ -4689,6 +5270,19 @@ AWS.CredentialProviderChain.defaultProviders = [
   function () { return new AWS.ProcessCredentials(); },
   function () { return new AWS.TokenFileWebIdentityCredentials(); },
   function () { return new AWS.EC2MetadataCredentials(); }
+];
+
+// Load custom token providers
+__webpack_require__(154);
+__webpack_require__(115);
+__webpack_require__(858);
+
+// Setup default providers for token chain
+// If this changes, please update documentation for
+// AWS.TokenProviderChain.defaultProviders in
+// token/token_provider_chain.js
+AWS.TokenProviderChain.defaultProviders = [
+  function () { return new AWS.SSOTokenProvider(); },
 ];
 
 var getRegion = function() {
@@ -4761,6 +5355,9 @@ AWS.util.update(AWS.Config.prototype.keys, {
   region: function() {
     var region = getRegion();
     return region ? getRealRegion(region): undefined;
+  },
+  tokenProvider: function() {
+    return new AWS.TokenProviderChain();
   },
   useFipsEndpoint: function() {
     var region = getRegion();
@@ -6656,6 +7253,18 @@ var Json = __webpack_require__(912);
 var JsonBuilder = __webpack_require__(337);
 var JsonParser = __webpack_require__(806);
 
+var METHODS_WITHOUT_BODY = ['GET', 'HEAD', 'DELETE'];
+
+function unsetContentLength(req) {
+  var payloadMember = util.getRequestPayloadShape(req);
+  if (
+    payloadMember === undefined &&
+    METHODS_WITHOUT_BODY.indexOf(req.httpRequest.method) >= 0
+  ) {
+    delete req.httpRequest.headers['Content-Length'];
+  }
+}
+
 function populateBody(req) {
   var builder = new JsonBuilder();
   var input = req.service.api.operations[req.operation].input;
@@ -6692,7 +7301,7 @@ function buildRequest(req) {
   Rest.buildRequest(req);
 
   // never send body payload on GET/HEAD/DELETE
-  if (['GET', 'HEAD', 'DELETE'].indexOf(req.httpRequest.method) < 0) {
+  if (METHODS_WITHOUT_BODY.indexOf(req.httpRequest.method) < 0) {
     populateBody(req);
   }
 }
@@ -6741,7 +7350,8 @@ function extractData(resp) {
 module.exports = {
   buildRequest: buildRequest,
   extractError: extractError,
-  extractData: extractData
+  extractData: extractData,
+  unsetContentLength: unsetContentLength
 };
 
 
@@ -7010,7 +7620,7 @@ AWS.util.update(AWS, {
   /**
    * @constant
    */
-  VERSION: '2.1198.0',
+  VERSION: '2.1296.0',
 
   /**
    * @api private
@@ -9526,7 +10136,6 @@ const file_command_1 = __webpack_require__(102);
 const utils_1 = __webpack_require__(82);
 const os = __importStar(__webpack_require__(87));
 const path = __importStar(__webpack_require__(622));
-const uuid_1 = __webpack_require__(25);
 const oidc_utils_1 = __webpack_require__(742);
 /**
  * The code to exit an action
@@ -9556,20 +10165,9 @@ function exportVariable(name, val) {
     process.env[name] = convertedVal;
     const filePath = process.env['GITHUB_ENV'] || '';
     if (filePath) {
-        const delimiter = `ghadelimiter_${uuid_1.v4()}`;
-        // These should realistically never happen, but just in case someone finds a way to exploit uuid generation let's not allow keys or values that contain the delimiter.
-        if (name.includes(delimiter)) {
-            throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
-        }
-        if (convertedVal.includes(delimiter)) {
-            throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
-        }
-        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
-        file_command_1.issueCommand('ENV', commandValue);
+        return file_command_1.issueFileCommand('ENV', file_command_1.prepareKeyValueMessage(name, val));
     }
-    else {
-        command_1.issueCommand('set-env', { name }, convertedVal);
-    }
+    command_1.issueCommand('set-env', { name }, convertedVal);
 }
 exports.exportVariable = exportVariable;
 /**
@@ -9587,7 +10185,7 @@ exports.setSecret = setSecret;
 function addPath(inputPath) {
     const filePath = process.env['GITHUB_PATH'] || '';
     if (filePath) {
-        file_command_1.issueCommand('PATH', inputPath);
+        file_command_1.issueFileCommand('PATH', inputPath);
     }
     else {
         command_1.issueCommand('add-path', {}, inputPath);
@@ -9627,7 +10225,10 @@ function getMultilineInput(name, options) {
     const inputs = getInput(name, options)
         .split('\n')
         .filter(x => x !== '');
-    return inputs;
+    if (options && options.trimWhitespace === false) {
+        return inputs;
+    }
+    return inputs.map(input => input.trim());
 }
 exports.getMultilineInput = getMultilineInput;
 /**
@@ -9660,8 +10261,12 @@ exports.getBooleanInput = getBooleanInput;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setOutput(name, value) {
+    const filePath = process.env['GITHUB_OUTPUT'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('OUTPUT', file_command_1.prepareKeyValueMessage(name, value));
+    }
     process.stdout.write(os.EOL);
-    command_1.issueCommand('set-output', { name }, value);
+    command_1.issueCommand('set-output', { name }, utils_1.toCommandValue(value));
 }
 exports.setOutput = setOutput;
 /**
@@ -9790,7 +10395,11 @@ exports.group = group;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveState(name, value) {
-    command_1.issueCommand('save-state', { name }, value);
+    const filePath = process.env['GITHUB_STATE'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('STATE', file_command_1.prepareKeyValueMessage(name, value));
+    }
+    command_1.issueCommand('save-state', { name }, utils_1.toCommandValue(value));
 }
 exports.saveState = saveState;
 /**
@@ -10649,6 +11258,8 @@ AWS.Service = inherit({
       version = this.config.signatureVersion;
     } else if (authtype === 'v4' || authtype === 'v4-unsigned-body') {
       version = 'v4';
+    } else if (authtype === 'bearer') {
+      version = 'bearer';
     } else {
       version = this.api.signatureVersion;
     }
@@ -11437,10 +12048,21 @@ function configureEndpoint(service) {
       }
 
       // signature version
-      if (!config.signatureVersion) config.signatureVersion = 'v4';
+      if (!config.signatureVersion) {
+        // Note: config is a global object and should not be mutated here.
+        // However, we are retaining this line for backwards compatibility.
+        // The non-v4 signatureVersion will be set in a copied object below.
+        config.signatureVersion = 'v4';
+      }
+
+      var useBearer = (service.api && service.api.signatureVersion) === 'bearer';
 
       // merge config
-      applyConfig(service, config);
+      applyConfig(service, Object.assign(
+        {},
+        config,
+        { signatureVersion: useBearer ? 'bearer' : config.signatureVersion }
+      ));
       return;
     }
   }
@@ -12251,18 +12873,52 @@ function getOperationAuthtype(req) {
   return operation ? operation.authtype : '';
 }
 
+/**
+ * @api private
+ */
+function getIdentityType(req) {
+  var service = req.service;
+
+  if (service.config.signatureVersion) {
+    return service.config.signatureVersion;
+  }
+
+  if (service.api.signatureVersion) {
+    return service.api.signatureVersion;
+  }
+
+  return getOperationAuthtype(req);
+}
+
 AWS.EventListeners = {
   Core: new SequentialExecutor().addNamedListeners(function(add, addAsync) {
-    addAsync('VALIDATE_CREDENTIALS', 'validate',
-        function VALIDATE_CREDENTIALS(req, done) {
-      if (!req.service.api.signatureVersion && !req.service.config.signatureVersion) return done(); // none
-      req.service.config.getCredentials(function(err) {
-        if (err) {
-          req.response.error = AWS.util.error(err,
-            {code: 'CredentialsError', message: 'Missing credentials in config, if using AWS_CONFIG_FILE, set AWS_SDK_LOAD_CONFIG=1'});
+    addAsync(
+      'VALIDATE_CREDENTIALS', 'validate',
+      function VALIDATE_CREDENTIALS(req, done) {
+        if (!req.service.api.signatureVersion && !req.service.config.signatureVersion) return done(); // none
+
+        var identityType = getIdentityType(req);
+        if (identityType === 'bearer') {
+          req.service.config.getToken(function(err) {
+            if (err) {
+              req.response.error = AWS.util.error(err, {code: 'TokenError'});
+            }
+            done();
+          });
+          return;
         }
-        done();
-      });
+
+        req.service.config.getCredentials(function(err) {
+          if (err) {
+            req.response.error = AWS.util.error(err,
+              {
+                code: 'CredentialsError',
+                message: 'Missing credentials in config, if using AWS_CONFIG_FILE, set AWS_SDK_LOAD_CONFIG=1'
+              }
+            );
+          }
+          done();
+        });
     });
 
     add('VALIDATE_REGION', 'validate', function VALIDATE_REGION(req) {
@@ -12428,42 +13084,61 @@ AWS.EventListeners = {
 
     addAsync('SIGN', 'sign', function SIGN(req, done) {
       var service = req.service;
-      var operations = req.service.api.operations || {};
-      var operation = operations[req.operation];
-      var authtype = operation ? operation.authtype : '';
-      if (!service.api.signatureVersion && !authtype && !service.config.signatureVersion) return done(); // none
+      var identityType = getIdentityType(req);
+      if (!identityType || identityType.length === 0) return done(); // none
 
-      service.config.getCredentials(function (err, credentials) {
-        if (err) {
-          req.response.error = err;
-          return done();
-        }
+      if (identityType === 'bearer') {
+        service.config.getToken(function (err, token) {
+          if (err) {
+            req.response.error = err;
+            return done();
+          }
 
-        try {
-          var date = service.getSkewCorrectedDate();
-          var SignerClass = service.getSignerClass(req);
-          var signer = new SignerClass(req.httpRequest,
-            service.getSigningName(req),
-            {
-              signatureCache: service.config.signatureCache,
-              operation: operation,
-              signatureVersion: service.api.signatureVersion
-            });
-          signer.setServiceClientId(service._clientId);
+          try {
+            var SignerClass = service.getSignerClass(req);
+            var signer = new SignerClass(req.httpRequest);
+            signer.addAuthorization(token);
+          } catch (e) {
+            req.response.error = e;
+          }
+          done();
+        });
+      } else {
+        service.config.getCredentials(function (err, credentials) {
+          if (err) {
+            req.response.error = err;
+            return done();
+          }
 
-          // clear old authorization headers
-          delete req.httpRequest.headers['Authorization'];
-          delete req.httpRequest.headers['Date'];
-          delete req.httpRequest.headers['X-Amz-Date'];
+          try {
+            var date = service.getSkewCorrectedDate();
+            var SignerClass = service.getSignerClass(req);
+            var operations = req.service.api.operations || {};
+            var operation = operations[req.operation];
+            var signer = new SignerClass(req.httpRequest,
+              service.getSigningName(req),
+              {
+                signatureCache: service.config.signatureCache,
+                operation: operation,
+                signatureVersion: service.api.signatureVersion
+              });
+            signer.setServiceClientId(service._clientId);
 
-          // add new authorization
-          signer.addAuthorization(credentials, date);
-          req.signedAt = date;
-        } catch (e) {
-          req.response.error = e;
-        }
-        done();
-      });
+            // clear old authorization headers
+            delete req.httpRequest.headers['Authorization'];
+            delete req.httpRequest.headers['Date'];
+            delete req.httpRequest.headers['X-Amz-Date'];
+
+            // add new authorization
+            signer.addAuthorization(credentials, date);
+            req.signedAt = date;
+          } catch (e) {
+            req.response.error = e;
+          }
+          done();
+        });
+
+      }
     });
 
     add('VALIDATE_RESPONSE', 'validateResponse', function VALIDATE_RESPONSE(resp) {
@@ -12478,11 +13153,12 @@ AWS.EventListeners = {
     });
 
     add('ERROR', 'error', function ERROR(err, resp) {
-      var errorCodeMapping = resp.request.service.api.errorCodeMapping;
-      if (errorCodeMapping && err && err.code) {
-        var mapping = errorCodeMapping[err.code];
-        if (mapping) {
-          resp.error.code = mapping.code;
+      var awsQueryCompatible = resp.request.service.api.awsQueryCompatible;
+      if (awsQueryCompatible) {
+        var headers = resp.httpResponse.headers;
+        var queryErrorCode = headers ? headers['x-amzn-query-error'] : undefined;
+        if (queryErrorCode && queryErrorCode.includes(';')) {
+          resp.error.code = queryErrorCode.split(';')[0];
         }
       }
     }, true);
@@ -12837,6 +13513,7 @@ AWS.EventListeners = {
     add('BUILD', 'build', svc.buildRequest);
     add('EXTRACT_DATA', 'extractData', svc.extractData);
     add('EXTRACT_ERROR', 'extractError', svc.extractError);
+    add('UNSET_CONTENT_LENGTH', 'afterBuild', svc.unsetContentLength);
   }),
 
   RestXml: new SequentialExecutor().addNamedListeners(function(add) {
@@ -14742,7 +15419,7 @@ module.exports = {
 /***/ 694:
 /***/ (function(module) {
 
-module.exports = {"acm":{"name":"ACM","cors":true},"apigateway":{"name":"APIGateway","cors":true},"applicationautoscaling":{"prefix":"application-autoscaling","name":"ApplicationAutoScaling","cors":true},"appstream":{"name":"AppStream"},"autoscaling":{"name":"AutoScaling","cors":true},"batch":{"name":"Batch"},"budgets":{"name":"Budgets"},"clouddirectory":{"name":"CloudDirectory","versions":["2016-05-10*"]},"cloudformation":{"name":"CloudFormation","cors":true},"cloudfront":{"name":"CloudFront","versions":["2013-05-12*","2013-11-11*","2014-05-31*","2014-10-21*","2014-11-06*","2015-04-17*","2015-07-27*","2015-09-17*","2016-01-13*","2016-01-28*","2016-08-01*","2016-08-20*","2016-09-07*","2016-09-29*","2016-11-25*","2017-03-25*","2017-10-30*","2018-06-18*","2018-11-05*","2019-03-26*"],"cors":true},"cloudhsm":{"name":"CloudHSM","cors":true},"cloudsearch":{"name":"CloudSearch"},"cloudsearchdomain":{"name":"CloudSearchDomain"},"cloudtrail":{"name":"CloudTrail","cors":true},"cloudwatch":{"prefix":"monitoring","name":"CloudWatch","cors":true},"cloudwatchevents":{"prefix":"events","name":"CloudWatchEvents","versions":["2014-02-03*"],"cors":true},"cloudwatchlogs":{"prefix":"logs","name":"CloudWatchLogs","cors":true},"codebuild":{"name":"CodeBuild","cors":true},"codecommit":{"name":"CodeCommit","cors":true},"codedeploy":{"name":"CodeDeploy","cors":true},"codepipeline":{"name":"CodePipeline","cors":true},"cognitoidentity":{"prefix":"cognito-identity","name":"CognitoIdentity","cors":true},"cognitoidentityserviceprovider":{"prefix":"cognito-idp","name":"CognitoIdentityServiceProvider","cors":true},"cognitosync":{"prefix":"cognito-sync","name":"CognitoSync","cors":true},"configservice":{"prefix":"config","name":"ConfigService","cors":true},"cur":{"name":"CUR","cors":true},"datapipeline":{"name":"DataPipeline"},"devicefarm":{"name":"DeviceFarm","cors":true},"directconnect":{"name":"DirectConnect","cors":true},"directoryservice":{"prefix":"ds","name":"DirectoryService"},"discovery":{"name":"Discovery"},"dms":{"name":"DMS"},"dynamodb":{"name":"DynamoDB","cors":true},"dynamodbstreams":{"prefix":"streams.dynamodb","name":"DynamoDBStreams","cors":true},"ec2":{"name":"EC2","versions":["2013-06-15*","2013-10-15*","2014-02-01*","2014-05-01*","2014-06-15*","2014-09-01*","2014-10-01*","2015-03-01*","2015-04-15*","2015-10-01*","2016-04-01*","2016-09-15*"],"cors":true},"ecr":{"name":"ECR","cors":true},"ecs":{"name":"ECS","cors":true},"efs":{"prefix":"elasticfilesystem","name":"EFS","cors":true},"elasticache":{"name":"ElastiCache","versions":["2012-11-15*","2014-03-24*","2014-07-15*","2014-09-30*"],"cors":true},"elasticbeanstalk":{"name":"ElasticBeanstalk","cors":true},"elb":{"prefix":"elasticloadbalancing","name":"ELB","cors":true},"elbv2":{"prefix":"elasticloadbalancingv2","name":"ELBv2","cors":true},"emr":{"prefix":"elasticmapreduce","name":"EMR","cors":true},"es":{"name":"ES"},"elastictranscoder":{"name":"ElasticTranscoder","cors":true},"firehose":{"name":"Firehose","cors":true},"gamelift":{"name":"GameLift","cors":true},"glacier":{"name":"Glacier"},"health":{"name":"Health"},"iam":{"name":"IAM","cors":true},"importexport":{"name":"ImportExport"},"inspector":{"name":"Inspector","versions":["2015-08-18*"],"cors":true},"iot":{"name":"Iot","cors":true},"iotdata":{"prefix":"iot-data","name":"IotData","cors":true},"kinesis":{"name":"Kinesis","cors":true},"kinesisanalytics":{"name":"KinesisAnalytics"},"kms":{"name":"KMS","cors":true},"lambda":{"name":"Lambda","cors":true},"lexruntime":{"prefix":"runtime.lex","name":"LexRuntime","cors":true},"lightsail":{"name":"Lightsail"},"machinelearning":{"name":"MachineLearning","cors":true},"marketplacecommerceanalytics":{"name":"MarketplaceCommerceAnalytics","cors":true},"marketplacemetering":{"prefix":"meteringmarketplace","name":"MarketplaceMetering"},"mturk":{"prefix":"mturk-requester","name":"MTurk","cors":true},"mobileanalytics":{"name":"MobileAnalytics","cors":true},"opsworks":{"name":"OpsWorks","cors":true},"opsworkscm":{"name":"OpsWorksCM"},"organizations":{"name":"Organizations"},"pinpoint":{"name":"Pinpoint"},"polly":{"name":"Polly","cors":true},"rds":{"name":"RDS","versions":["2014-09-01*"],"cors":true},"redshift":{"name":"Redshift","cors":true},"rekognition":{"name":"Rekognition","cors":true},"resourcegroupstaggingapi":{"name":"ResourceGroupsTaggingAPI"},"route53":{"name":"Route53","cors":true},"route53domains":{"name":"Route53Domains","cors":true},"s3":{"name":"S3","dualstackAvailable":true,"cors":true},"s3control":{"name":"S3Control","dualstackAvailable":true,"xmlNoDefaultLists":true},"servicecatalog":{"name":"ServiceCatalog","cors":true},"ses":{"prefix":"email","name":"SES","cors":true},"shield":{"name":"Shield"},"simpledb":{"prefix":"sdb","name":"SimpleDB"},"sms":{"name":"SMS"},"snowball":{"name":"Snowball"},"sns":{"name":"SNS","cors":true},"sqs":{"name":"SQS","cors":true},"ssm":{"name":"SSM","cors":true},"storagegateway":{"name":"StorageGateway","cors":true},"stepfunctions":{"prefix":"states","name":"StepFunctions"},"sts":{"name":"STS","cors":true},"support":{"name":"Support"},"swf":{"name":"SWF"},"xray":{"name":"XRay","cors":true},"waf":{"name":"WAF","cors":true},"wafregional":{"prefix":"waf-regional","name":"WAFRegional"},"workdocs":{"name":"WorkDocs","cors":true},"workspaces":{"name":"WorkSpaces"},"codestar":{"name":"CodeStar"},"lexmodelbuildingservice":{"prefix":"lex-models","name":"LexModelBuildingService","cors":true},"marketplaceentitlementservice":{"prefix":"entitlement.marketplace","name":"MarketplaceEntitlementService"},"athena":{"name":"Athena","cors":true},"greengrass":{"name":"Greengrass"},"dax":{"name":"DAX"},"migrationhub":{"prefix":"AWSMigrationHub","name":"MigrationHub"},"cloudhsmv2":{"name":"CloudHSMV2","cors":true},"glue":{"name":"Glue"},"mobile":{"name":"Mobile"},"pricing":{"name":"Pricing","cors":true},"costexplorer":{"prefix":"ce","name":"CostExplorer","cors":true},"mediaconvert":{"name":"MediaConvert"},"medialive":{"name":"MediaLive"},"mediapackage":{"name":"MediaPackage"},"mediastore":{"name":"MediaStore"},"mediastoredata":{"prefix":"mediastore-data","name":"MediaStoreData","cors":true},"appsync":{"name":"AppSync"},"guardduty":{"name":"GuardDuty"},"mq":{"name":"MQ"},"comprehend":{"name":"Comprehend","cors":true},"iotjobsdataplane":{"prefix":"iot-jobs-data","name":"IoTJobsDataPlane"},"kinesisvideoarchivedmedia":{"prefix":"kinesis-video-archived-media","name":"KinesisVideoArchivedMedia","cors":true},"kinesisvideomedia":{"prefix":"kinesis-video-media","name":"KinesisVideoMedia","cors":true},"kinesisvideo":{"name":"KinesisVideo","cors":true},"sagemakerruntime":{"prefix":"runtime.sagemaker","name":"SageMakerRuntime"},"sagemaker":{"name":"SageMaker"},"translate":{"name":"Translate","cors":true},"resourcegroups":{"prefix":"resource-groups","name":"ResourceGroups","cors":true},"alexaforbusiness":{"name":"AlexaForBusiness"},"cloud9":{"name":"Cloud9"},"serverlessapplicationrepository":{"prefix":"serverlessrepo","name":"ServerlessApplicationRepository"},"servicediscovery":{"name":"ServiceDiscovery"},"workmail":{"name":"WorkMail"},"autoscalingplans":{"prefix":"autoscaling-plans","name":"AutoScalingPlans"},"transcribeservice":{"prefix":"transcribe","name":"TranscribeService"},"connect":{"name":"Connect","cors":true},"acmpca":{"prefix":"acm-pca","name":"ACMPCA"},"fms":{"name":"FMS"},"secretsmanager":{"name":"SecretsManager","cors":true},"iotanalytics":{"name":"IoTAnalytics","cors":true},"iot1clickdevicesservice":{"prefix":"iot1click-devices","name":"IoT1ClickDevicesService"},"iot1clickprojects":{"prefix":"iot1click-projects","name":"IoT1ClickProjects"},"pi":{"name":"PI"},"neptune":{"name":"Neptune"},"mediatailor":{"name":"MediaTailor"},"eks":{"name":"EKS"},"macie":{"name":"Macie"},"dlm":{"name":"DLM"},"signer":{"name":"Signer"},"chime":{"name":"Chime"},"pinpointemail":{"prefix":"pinpoint-email","name":"PinpointEmail"},"ram":{"name":"RAM"},"route53resolver":{"name":"Route53Resolver"},"pinpointsmsvoice":{"prefix":"sms-voice","name":"PinpointSMSVoice"},"quicksight":{"name":"QuickSight"},"rdsdataservice":{"prefix":"rds-data","name":"RDSDataService"},"amplify":{"name":"Amplify"},"datasync":{"name":"DataSync"},"robomaker":{"name":"RoboMaker"},"transfer":{"name":"Transfer"},"globalaccelerator":{"name":"GlobalAccelerator"},"comprehendmedical":{"name":"ComprehendMedical","cors":true},"kinesisanalyticsv2":{"name":"KinesisAnalyticsV2"},"mediaconnect":{"name":"MediaConnect"},"fsx":{"name":"FSx"},"securityhub":{"name":"SecurityHub"},"appmesh":{"name":"AppMesh","versions":["2018-10-01*"]},"licensemanager":{"prefix":"license-manager","name":"LicenseManager"},"kafka":{"name":"Kafka"},"apigatewaymanagementapi":{"name":"ApiGatewayManagementApi"},"apigatewayv2":{"name":"ApiGatewayV2"},"docdb":{"name":"DocDB"},"backup":{"name":"Backup"},"worklink":{"name":"WorkLink"},"textract":{"name":"Textract"},"managedblockchain":{"name":"ManagedBlockchain"},"mediapackagevod":{"prefix":"mediapackage-vod","name":"MediaPackageVod"},"groundstation":{"name":"GroundStation"},"iotthingsgraph":{"name":"IoTThingsGraph"},"iotevents":{"name":"IoTEvents"},"ioteventsdata":{"prefix":"iotevents-data","name":"IoTEventsData"},"personalize":{"name":"Personalize","cors":true},"personalizeevents":{"prefix":"personalize-events","name":"PersonalizeEvents","cors":true},"personalizeruntime":{"prefix":"personalize-runtime","name":"PersonalizeRuntime","cors":true},"applicationinsights":{"prefix":"application-insights","name":"ApplicationInsights"},"servicequotas":{"prefix":"service-quotas","name":"ServiceQuotas"},"ec2instanceconnect":{"prefix":"ec2-instance-connect","name":"EC2InstanceConnect"},"eventbridge":{"name":"EventBridge"},"lakeformation":{"name":"LakeFormation"},"forecastservice":{"prefix":"forecast","name":"ForecastService","cors":true},"forecastqueryservice":{"prefix":"forecastquery","name":"ForecastQueryService","cors":true},"qldb":{"name":"QLDB"},"qldbsession":{"prefix":"qldb-session","name":"QLDBSession"},"workmailmessageflow":{"name":"WorkMailMessageFlow"},"codestarnotifications":{"prefix":"codestar-notifications","name":"CodeStarNotifications"},"savingsplans":{"name":"SavingsPlans"},"sso":{"name":"SSO"},"ssooidc":{"prefix":"sso-oidc","name":"SSOOIDC"},"marketplacecatalog":{"prefix":"marketplace-catalog","name":"MarketplaceCatalog"},"dataexchange":{"name":"DataExchange"},"sesv2":{"name":"SESV2"},"migrationhubconfig":{"prefix":"migrationhub-config","name":"MigrationHubConfig"},"connectparticipant":{"name":"ConnectParticipant"},"appconfig":{"name":"AppConfig"},"iotsecuretunneling":{"name":"IoTSecureTunneling"},"wafv2":{"name":"WAFV2"},"elasticinference":{"prefix":"elastic-inference","name":"ElasticInference"},"imagebuilder":{"name":"Imagebuilder"},"schemas":{"name":"Schemas"},"accessanalyzer":{"name":"AccessAnalyzer"},"codegurureviewer":{"prefix":"codeguru-reviewer","name":"CodeGuruReviewer"},"codeguruprofiler":{"name":"CodeGuruProfiler"},"computeoptimizer":{"prefix":"compute-optimizer","name":"ComputeOptimizer"},"frauddetector":{"name":"FraudDetector"},"kendra":{"name":"Kendra"},"networkmanager":{"name":"NetworkManager"},"outposts":{"name":"Outposts"},"augmentedairuntime":{"prefix":"sagemaker-a2i-runtime","name":"AugmentedAIRuntime"},"ebs":{"name":"EBS"},"kinesisvideosignalingchannels":{"prefix":"kinesis-video-signaling","name":"KinesisVideoSignalingChannels","cors":true},"detective":{"name":"Detective"},"codestarconnections":{"prefix":"codestar-connections","name":"CodeStarconnections"},"synthetics":{"name":"Synthetics"},"iotsitewise":{"name":"IoTSiteWise"},"macie2":{"name":"Macie2"},"codeartifact":{"name":"CodeArtifact"},"honeycode":{"name":"Honeycode"},"ivs":{"name":"IVS"},"braket":{"name":"Braket"},"identitystore":{"name":"IdentityStore"},"appflow":{"name":"Appflow"},"redshiftdata":{"prefix":"redshift-data","name":"RedshiftData"},"ssoadmin":{"prefix":"sso-admin","name":"SSOAdmin"},"timestreamquery":{"prefix":"timestream-query","name":"TimestreamQuery"},"timestreamwrite":{"prefix":"timestream-write","name":"TimestreamWrite"},"s3outposts":{"name":"S3Outposts"},"databrew":{"name":"DataBrew"},"servicecatalogappregistry":{"prefix":"servicecatalog-appregistry","name":"ServiceCatalogAppRegistry"},"networkfirewall":{"prefix":"network-firewall","name":"NetworkFirewall"},"mwaa":{"name":"MWAA"},"amplifybackend":{"name":"AmplifyBackend"},"appintegrations":{"name":"AppIntegrations"},"connectcontactlens":{"prefix":"connect-contact-lens","name":"ConnectContactLens"},"devopsguru":{"prefix":"devops-guru","name":"DevOpsGuru"},"ecrpublic":{"prefix":"ecr-public","name":"ECRPUBLIC"},"lookoutvision":{"name":"LookoutVision"},"sagemakerfeaturestoreruntime":{"prefix":"sagemaker-featurestore-runtime","name":"SageMakerFeatureStoreRuntime"},"customerprofiles":{"prefix":"customer-profiles","name":"CustomerProfiles"},"auditmanager":{"name":"AuditManager"},"emrcontainers":{"prefix":"emr-containers","name":"EMRcontainers"},"healthlake":{"name":"HealthLake"},"sagemakeredge":{"prefix":"sagemaker-edge","name":"SagemakerEdge"},"amp":{"name":"Amp"},"greengrassv2":{"name":"GreengrassV2"},"iotdeviceadvisor":{"name":"IotDeviceAdvisor"},"iotfleethub":{"name":"IoTFleetHub"},"iotwireless":{"name":"IoTWireless"},"location":{"name":"Location","cors":true},"wellarchitected":{"name":"WellArchitected"},"lexmodelsv2":{"prefix":"models.lex.v2","name":"LexModelsV2"},"lexruntimev2":{"prefix":"runtime.lex.v2","name":"LexRuntimeV2","cors":true},"fis":{"name":"Fis"},"lookoutmetrics":{"name":"LookoutMetrics"},"mgn":{"name":"Mgn"},"lookoutequipment":{"name":"LookoutEquipment"},"nimble":{"name":"Nimble"},"finspace":{"name":"Finspace"},"finspacedata":{"prefix":"finspace-data","name":"Finspacedata"},"ssmcontacts":{"prefix":"ssm-contacts","name":"SSMContacts"},"ssmincidents":{"prefix":"ssm-incidents","name":"SSMIncidents"},"applicationcostprofiler":{"name":"ApplicationCostProfiler"},"apprunner":{"name":"AppRunner"},"proton":{"name":"Proton"},"route53recoverycluster":{"prefix":"route53-recovery-cluster","name":"Route53RecoveryCluster"},"route53recoverycontrolconfig":{"prefix":"route53-recovery-control-config","name":"Route53RecoveryControlConfig"},"route53recoveryreadiness":{"prefix":"route53-recovery-readiness","name":"Route53RecoveryReadiness"},"chimesdkidentity":{"prefix":"chime-sdk-identity","name":"ChimeSDKIdentity"},"chimesdkmessaging":{"prefix":"chime-sdk-messaging","name":"ChimeSDKMessaging"},"snowdevicemanagement":{"prefix":"snow-device-management","name":"SnowDeviceManagement"},"memorydb":{"name":"MemoryDB"},"opensearch":{"name":"OpenSearch"},"kafkaconnect":{"name":"KafkaConnect"},"voiceid":{"prefix":"voice-id","name":"VoiceID"},"wisdom":{"name":"Wisdom"},"account":{"name":"Account"},"cloudcontrol":{"name":"CloudControl"},"grafana":{"name":"Grafana"},"panorama":{"name":"Panorama"},"chimesdkmeetings":{"prefix":"chime-sdk-meetings","name":"ChimeSDKMeetings"},"resiliencehub":{"name":"Resiliencehub"},"migrationhubstrategy":{"name":"MigrationHubStrategy"},"appconfigdata":{"name":"AppConfigData"},"drs":{"name":"Drs"},"migrationhubrefactorspaces":{"prefix":"migration-hub-refactor-spaces","name":"MigrationHubRefactorSpaces"},"evidently":{"name":"Evidently"},"inspector2":{"name":"Inspector2"},"rbin":{"name":"Rbin"},"rum":{"name":"RUM"},"backupgateway":{"prefix":"backup-gateway","name":"BackupGateway"},"iottwinmaker":{"name":"IoTTwinMaker"},"workspacesweb":{"prefix":"workspaces-web","name":"WorkSpacesWeb"},"amplifyuibuilder":{"name":"AmplifyUIBuilder"},"keyspaces":{"name":"Keyspaces"},"billingconductor":{"name":"Billingconductor"},"gamesparks":{"name":"GameSparks"},"pinpointsmsvoicev2":{"prefix":"pinpoint-sms-voice-v2","name":"PinpointSMSVoiceV2"},"ivschat":{"name":"Ivschat"},"chimesdkmediapipelines":{"prefix":"chime-sdk-media-pipelines","name":"ChimeSDKMediaPipelines"},"emrserverless":{"prefix":"emr-serverless","name":"EMRServerless"},"m2":{"name":"M2"},"connectcampaigns":{"name":"ConnectCampaigns"},"redshiftserverless":{"prefix":"redshift-serverless","name":"RedshiftServerless"},"rolesanywhere":{"name":"RolesAnywhere"},"licensemanagerusersubscriptions":{"prefix":"license-manager-user-subscriptions","name":"LicenseManagerUserSubscriptions"},"backupstorage":{"name":"BackupStorage"},"privatenetworks":{"name":"PrivateNetworks"}};
+module.exports = {"acm":{"name":"ACM","cors":true},"apigateway":{"name":"APIGateway","cors":true},"applicationautoscaling":{"prefix":"application-autoscaling","name":"ApplicationAutoScaling","cors":true},"appstream":{"name":"AppStream"},"autoscaling":{"name":"AutoScaling","cors":true},"batch":{"name":"Batch"},"budgets":{"name":"Budgets"},"clouddirectory":{"name":"CloudDirectory","versions":["2016-05-10*"]},"cloudformation":{"name":"CloudFormation","cors":true},"cloudfront":{"name":"CloudFront","versions":["2013-05-12*","2013-11-11*","2014-05-31*","2014-10-21*","2014-11-06*","2015-04-17*","2015-07-27*","2015-09-17*","2016-01-13*","2016-01-28*","2016-08-01*","2016-08-20*","2016-09-07*","2016-09-29*","2016-11-25*","2017-03-25*","2017-10-30*","2018-06-18*","2018-11-05*","2019-03-26*"],"cors":true},"cloudhsm":{"name":"CloudHSM","cors":true},"cloudsearch":{"name":"CloudSearch"},"cloudsearchdomain":{"name":"CloudSearchDomain"},"cloudtrail":{"name":"CloudTrail","cors":true},"cloudwatch":{"prefix":"monitoring","name":"CloudWatch","cors":true},"cloudwatchevents":{"prefix":"events","name":"CloudWatchEvents","versions":["2014-02-03*"],"cors":true},"cloudwatchlogs":{"prefix":"logs","name":"CloudWatchLogs","cors":true},"codebuild":{"name":"CodeBuild","cors":true},"codecommit":{"name":"CodeCommit","cors":true},"codedeploy":{"name":"CodeDeploy","cors":true},"codepipeline":{"name":"CodePipeline","cors":true},"cognitoidentity":{"prefix":"cognito-identity","name":"CognitoIdentity","cors":true},"cognitoidentityserviceprovider":{"prefix":"cognito-idp","name":"CognitoIdentityServiceProvider","cors":true},"cognitosync":{"prefix":"cognito-sync","name":"CognitoSync","cors":true},"configservice":{"prefix":"config","name":"ConfigService","cors":true},"cur":{"name":"CUR","cors":true},"datapipeline":{"name":"DataPipeline"},"devicefarm":{"name":"DeviceFarm","cors":true},"directconnect":{"name":"DirectConnect","cors":true},"directoryservice":{"prefix":"ds","name":"DirectoryService"},"discovery":{"name":"Discovery"},"dms":{"name":"DMS"},"dynamodb":{"name":"DynamoDB","cors":true},"dynamodbstreams":{"prefix":"streams.dynamodb","name":"DynamoDBStreams","cors":true},"ec2":{"name":"EC2","versions":["2013-06-15*","2013-10-15*","2014-02-01*","2014-05-01*","2014-06-15*","2014-09-01*","2014-10-01*","2015-03-01*","2015-04-15*","2015-10-01*","2016-04-01*","2016-09-15*"],"cors":true},"ecr":{"name":"ECR","cors":true},"ecs":{"name":"ECS","cors":true},"efs":{"prefix":"elasticfilesystem","name":"EFS","cors":true},"elasticache":{"name":"ElastiCache","versions":["2012-11-15*","2014-03-24*","2014-07-15*","2014-09-30*"],"cors":true},"elasticbeanstalk":{"name":"ElasticBeanstalk","cors":true},"elb":{"prefix":"elasticloadbalancing","name":"ELB","cors":true},"elbv2":{"prefix":"elasticloadbalancingv2","name":"ELBv2","cors":true},"emr":{"prefix":"elasticmapreduce","name":"EMR","cors":true},"es":{"name":"ES"},"elastictranscoder":{"name":"ElasticTranscoder","cors":true},"firehose":{"name":"Firehose","cors":true},"gamelift":{"name":"GameLift","cors":true},"glacier":{"name":"Glacier"},"health":{"name":"Health"},"iam":{"name":"IAM","cors":true},"importexport":{"name":"ImportExport"},"inspector":{"name":"Inspector","versions":["2015-08-18*"],"cors":true},"iot":{"name":"Iot","cors":true},"iotdata":{"prefix":"iot-data","name":"IotData","cors":true},"kinesis":{"name":"Kinesis","cors":true},"kinesisanalytics":{"name":"KinesisAnalytics"},"kms":{"name":"KMS","cors":true},"lambda":{"name":"Lambda","cors":true},"lexruntime":{"prefix":"runtime.lex","name":"LexRuntime","cors":true},"lightsail":{"name":"Lightsail"},"machinelearning":{"name":"MachineLearning","cors":true},"marketplacecommerceanalytics":{"name":"MarketplaceCommerceAnalytics","cors":true},"marketplacemetering":{"prefix":"meteringmarketplace","name":"MarketplaceMetering"},"mturk":{"prefix":"mturk-requester","name":"MTurk","cors":true},"mobileanalytics":{"name":"MobileAnalytics","cors":true},"opsworks":{"name":"OpsWorks","cors":true},"opsworkscm":{"name":"OpsWorksCM"},"organizations":{"name":"Organizations"},"pinpoint":{"name":"Pinpoint"},"polly":{"name":"Polly","cors":true},"rds":{"name":"RDS","versions":["2014-09-01*"],"cors":true},"redshift":{"name":"Redshift","cors":true},"rekognition":{"name":"Rekognition","cors":true},"resourcegroupstaggingapi":{"name":"ResourceGroupsTaggingAPI"},"route53":{"name":"Route53","cors":true},"route53domains":{"name":"Route53Domains","cors":true},"s3":{"name":"S3","dualstackAvailable":true,"cors":true},"s3control":{"name":"S3Control","dualstackAvailable":true,"xmlNoDefaultLists":true},"servicecatalog":{"name":"ServiceCatalog","cors":true},"ses":{"prefix":"email","name":"SES","cors":true},"shield":{"name":"Shield"},"simpledb":{"prefix":"sdb","name":"SimpleDB"},"sms":{"name":"SMS"},"snowball":{"name":"Snowball"},"sns":{"name":"SNS","cors":true},"sqs":{"name":"SQS","cors":true},"ssm":{"name":"SSM","cors":true},"storagegateway":{"name":"StorageGateway","cors":true},"stepfunctions":{"prefix":"states","name":"StepFunctions"},"sts":{"name":"STS","cors":true},"support":{"name":"Support"},"swf":{"name":"SWF"},"xray":{"name":"XRay","cors":true},"waf":{"name":"WAF","cors":true},"wafregional":{"prefix":"waf-regional","name":"WAFRegional"},"workdocs":{"name":"WorkDocs","cors":true},"workspaces":{"name":"WorkSpaces"},"codestar":{"name":"CodeStar"},"lexmodelbuildingservice":{"prefix":"lex-models","name":"LexModelBuildingService","cors":true},"marketplaceentitlementservice":{"prefix":"entitlement.marketplace","name":"MarketplaceEntitlementService"},"athena":{"name":"Athena","cors":true},"greengrass":{"name":"Greengrass"},"dax":{"name":"DAX"},"migrationhub":{"prefix":"AWSMigrationHub","name":"MigrationHub"},"cloudhsmv2":{"name":"CloudHSMV2","cors":true},"glue":{"name":"Glue"},"mobile":{"name":"Mobile"},"pricing":{"name":"Pricing","cors":true},"costexplorer":{"prefix":"ce","name":"CostExplorer","cors":true},"mediaconvert":{"name":"MediaConvert"},"medialive":{"name":"MediaLive"},"mediapackage":{"name":"MediaPackage"},"mediastore":{"name":"MediaStore"},"mediastoredata":{"prefix":"mediastore-data","name":"MediaStoreData","cors":true},"appsync":{"name":"AppSync"},"guardduty":{"name":"GuardDuty"},"mq":{"name":"MQ"},"comprehend":{"name":"Comprehend","cors":true},"iotjobsdataplane":{"prefix":"iot-jobs-data","name":"IoTJobsDataPlane"},"kinesisvideoarchivedmedia":{"prefix":"kinesis-video-archived-media","name":"KinesisVideoArchivedMedia","cors":true},"kinesisvideomedia":{"prefix":"kinesis-video-media","name":"KinesisVideoMedia","cors":true},"kinesisvideo":{"name":"KinesisVideo","cors":true},"sagemakerruntime":{"prefix":"runtime.sagemaker","name":"SageMakerRuntime"},"sagemaker":{"name":"SageMaker"},"translate":{"name":"Translate","cors":true},"resourcegroups":{"prefix":"resource-groups","name":"ResourceGroups","cors":true},"alexaforbusiness":{"name":"AlexaForBusiness"},"cloud9":{"name":"Cloud9"},"serverlessapplicationrepository":{"prefix":"serverlessrepo","name":"ServerlessApplicationRepository"},"servicediscovery":{"name":"ServiceDiscovery"},"workmail":{"name":"WorkMail"},"autoscalingplans":{"prefix":"autoscaling-plans","name":"AutoScalingPlans"},"transcribeservice":{"prefix":"transcribe","name":"TranscribeService"},"connect":{"name":"Connect","cors":true},"acmpca":{"prefix":"acm-pca","name":"ACMPCA"},"fms":{"name":"FMS"},"secretsmanager":{"name":"SecretsManager","cors":true},"iotanalytics":{"name":"IoTAnalytics","cors":true},"iot1clickdevicesservice":{"prefix":"iot1click-devices","name":"IoT1ClickDevicesService"},"iot1clickprojects":{"prefix":"iot1click-projects","name":"IoT1ClickProjects"},"pi":{"name":"PI"},"neptune":{"name":"Neptune"},"mediatailor":{"name":"MediaTailor"},"eks":{"name":"EKS"},"macie":{"name":"Macie"},"dlm":{"name":"DLM"},"signer":{"name":"Signer"},"chime":{"name":"Chime"},"pinpointemail":{"prefix":"pinpoint-email","name":"PinpointEmail"},"ram":{"name":"RAM"},"route53resolver":{"name":"Route53Resolver"},"pinpointsmsvoice":{"prefix":"sms-voice","name":"PinpointSMSVoice"},"quicksight":{"name":"QuickSight"},"rdsdataservice":{"prefix":"rds-data","name":"RDSDataService"},"amplify":{"name":"Amplify"},"datasync":{"name":"DataSync"},"robomaker":{"name":"RoboMaker"},"transfer":{"name":"Transfer"},"globalaccelerator":{"name":"GlobalAccelerator"},"comprehendmedical":{"name":"ComprehendMedical","cors":true},"kinesisanalyticsv2":{"name":"KinesisAnalyticsV2"},"mediaconnect":{"name":"MediaConnect"},"fsx":{"name":"FSx"},"securityhub":{"name":"SecurityHub"},"appmesh":{"name":"AppMesh","versions":["2018-10-01*"]},"licensemanager":{"prefix":"license-manager","name":"LicenseManager"},"kafka":{"name":"Kafka"},"apigatewaymanagementapi":{"name":"ApiGatewayManagementApi"},"apigatewayv2":{"name":"ApiGatewayV2"},"docdb":{"name":"DocDB"},"backup":{"name":"Backup"},"worklink":{"name":"WorkLink"},"textract":{"name":"Textract"},"managedblockchain":{"name":"ManagedBlockchain"},"mediapackagevod":{"prefix":"mediapackage-vod","name":"MediaPackageVod"},"groundstation":{"name":"GroundStation"},"iotthingsgraph":{"name":"IoTThingsGraph"},"iotevents":{"name":"IoTEvents"},"ioteventsdata":{"prefix":"iotevents-data","name":"IoTEventsData"},"personalize":{"name":"Personalize","cors":true},"personalizeevents":{"prefix":"personalize-events","name":"PersonalizeEvents","cors":true},"personalizeruntime":{"prefix":"personalize-runtime","name":"PersonalizeRuntime","cors":true},"applicationinsights":{"prefix":"application-insights","name":"ApplicationInsights"},"servicequotas":{"prefix":"service-quotas","name":"ServiceQuotas"},"ec2instanceconnect":{"prefix":"ec2-instance-connect","name":"EC2InstanceConnect"},"eventbridge":{"name":"EventBridge"},"lakeformation":{"name":"LakeFormation"},"forecastservice":{"prefix":"forecast","name":"ForecastService","cors":true},"forecastqueryservice":{"prefix":"forecastquery","name":"ForecastQueryService","cors":true},"qldb":{"name":"QLDB"},"qldbsession":{"prefix":"qldb-session","name":"QLDBSession"},"workmailmessageflow":{"name":"WorkMailMessageFlow"},"codestarnotifications":{"prefix":"codestar-notifications","name":"CodeStarNotifications"},"savingsplans":{"name":"SavingsPlans"},"sso":{"name":"SSO"},"ssooidc":{"prefix":"sso-oidc","name":"SSOOIDC"},"marketplacecatalog":{"prefix":"marketplace-catalog","name":"MarketplaceCatalog","cors":true},"dataexchange":{"name":"DataExchange"},"sesv2":{"name":"SESV2"},"migrationhubconfig":{"prefix":"migrationhub-config","name":"MigrationHubConfig"},"connectparticipant":{"name":"ConnectParticipant"},"appconfig":{"name":"AppConfig"},"iotsecuretunneling":{"name":"IoTSecureTunneling"},"wafv2":{"name":"WAFV2"},"elasticinference":{"prefix":"elastic-inference","name":"ElasticInference"},"imagebuilder":{"name":"Imagebuilder"},"schemas":{"name":"Schemas"},"accessanalyzer":{"name":"AccessAnalyzer"},"codegurureviewer":{"prefix":"codeguru-reviewer","name":"CodeGuruReviewer"},"codeguruprofiler":{"name":"CodeGuruProfiler"},"computeoptimizer":{"prefix":"compute-optimizer","name":"ComputeOptimizer"},"frauddetector":{"name":"FraudDetector"},"kendra":{"name":"Kendra"},"networkmanager":{"name":"NetworkManager"},"outposts":{"name":"Outposts"},"augmentedairuntime":{"prefix":"sagemaker-a2i-runtime","name":"AugmentedAIRuntime"},"ebs":{"name":"EBS"},"kinesisvideosignalingchannels":{"prefix":"kinesis-video-signaling","name":"KinesisVideoSignalingChannels","cors":true},"detective":{"name":"Detective"},"codestarconnections":{"prefix":"codestar-connections","name":"CodeStarconnections"},"synthetics":{"name":"Synthetics"},"iotsitewise":{"name":"IoTSiteWise"},"macie2":{"name":"Macie2"},"codeartifact":{"name":"CodeArtifact"},"honeycode":{"name":"Honeycode"},"ivs":{"name":"IVS"},"braket":{"name":"Braket"},"identitystore":{"name":"IdentityStore"},"appflow":{"name":"Appflow"},"redshiftdata":{"prefix":"redshift-data","name":"RedshiftData"},"ssoadmin":{"prefix":"sso-admin","name":"SSOAdmin"},"timestreamquery":{"prefix":"timestream-query","name":"TimestreamQuery"},"timestreamwrite":{"prefix":"timestream-write","name":"TimestreamWrite"},"s3outposts":{"name":"S3Outposts"},"databrew":{"name":"DataBrew"},"servicecatalogappregistry":{"prefix":"servicecatalog-appregistry","name":"ServiceCatalogAppRegistry"},"networkfirewall":{"prefix":"network-firewall","name":"NetworkFirewall"},"mwaa":{"name":"MWAA"},"amplifybackend":{"name":"AmplifyBackend"},"appintegrations":{"name":"AppIntegrations"},"connectcontactlens":{"prefix":"connect-contact-lens","name":"ConnectContactLens"},"devopsguru":{"prefix":"devops-guru","name":"DevOpsGuru"},"ecrpublic":{"prefix":"ecr-public","name":"ECRPUBLIC"},"lookoutvision":{"name":"LookoutVision"},"sagemakerfeaturestoreruntime":{"prefix":"sagemaker-featurestore-runtime","name":"SageMakerFeatureStoreRuntime"},"customerprofiles":{"prefix":"customer-profiles","name":"CustomerProfiles"},"auditmanager":{"name":"AuditManager"},"emrcontainers":{"prefix":"emr-containers","name":"EMRcontainers"},"healthlake":{"name":"HealthLake"},"sagemakeredge":{"prefix":"sagemaker-edge","name":"SagemakerEdge"},"amp":{"name":"Amp"},"greengrassv2":{"name":"GreengrassV2"},"iotdeviceadvisor":{"name":"IotDeviceAdvisor"},"iotfleethub":{"name":"IoTFleetHub"},"iotwireless":{"name":"IoTWireless"},"location":{"name":"Location","cors":true},"wellarchitected":{"name":"WellArchitected"},"lexmodelsv2":{"prefix":"models.lex.v2","name":"LexModelsV2"},"lexruntimev2":{"prefix":"runtime.lex.v2","name":"LexRuntimeV2","cors":true},"fis":{"name":"Fis"},"lookoutmetrics":{"name":"LookoutMetrics"},"mgn":{"name":"Mgn"},"lookoutequipment":{"name":"LookoutEquipment"},"nimble":{"name":"Nimble"},"finspace":{"name":"Finspace"},"finspacedata":{"prefix":"finspace-data","name":"Finspacedata"},"ssmcontacts":{"prefix":"ssm-contacts","name":"SSMContacts"},"ssmincidents":{"prefix":"ssm-incidents","name":"SSMIncidents"},"applicationcostprofiler":{"name":"ApplicationCostProfiler"},"apprunner":{"name":"AppRunner"},"proton":{"name":"Proton"},"route53recoverycluster":{"prefix":"route53-recovery-cluster","name":"Route53RecoveryCluster"},"route53recoverycontrolconfig":{"prefix":"route53-recovery-control-config","name":"Route53RecoveryControlConfig"},"route53recoveryreadiness":{"prefix":"route53-recovery-readiness","name":"Route53RecoveryReadiness"},"chimesdkidentity":{"prefix":"chime-sdk-identity","name":"ChimeSDKIdentity"},"chimesdkmessaging":{"prefix":"chime-sdk-messaging","name":"ChimeSDKMessaging"},"snowdevicemanagement":{"prefix":"snow-device-management","name":"SnowDeviceManagement"},"memorydb":{"name":"MemoryDB"},"opensearch":{"name":"OpenSearch"},"kafkaconnect":{"name":"KafkaConnect"},"voiceid":{"prefix":"voice-id","name":"VoiceID"},"wisdom":{"name":"Wisdom"},"account":{"name":"Account"},"cloudcontrol":{"name":"CloudControl"},"grafana":{"name":"Grafana"},"panorama":{"name":"Panorama"},"chimesdkmeetings":{"prefix":"chime-sdk-meetings","name":"ChimeSDKMeetings"},"resiliencehub":{"name":"Resiliencehub"},"migrationhubstrategy":{"name":"MigrationHubStrategy"},"appconfigdata":{"name":"AppConfigData"},"drs":{"name":"Drs"},"migrationhubrefactorspaces":{"prefix":"migration-hub-refactor-spaces","name":"MigrationHubRefactorSpaces"},"evidently":{"name":"Evidently"},"inspector2":{"name":"Inspector2"},"rbin":{"name":"Rbin"},"rum":{"name":"RUM"},"backupgateway":{"prefix":"backup-gateway","name":"BackupGateway"},"iottwinmaker":{"name":"IoTTwinMaker"},"workspacesweb":{"prefix":"workspaces-web","name":"WorkSpacesWeb"},"amplifyuibuilder":{"name":"AmplifyUIBuilder"},"keyspaces":{"name":"Keyspaces"},"billingconductor":{"name":"Billingconductor"},"gamesparks":{"name":"GameSparks"},"pinpointsmsvoicev2":{"prefix":"pinpoint-sms-voice-v2","name":"PinpointSMSVoiceV2"},"ivschat":{"name":"Ivschat"},"chimesdkmediapipelines":{"prefix":"chime-sdk-media-pipelines","name":"ChimeSDKMediaPipelines"},"emrserverless":{"prefix":"emr-serverless","name":"EMRServerless"},"m2":{"name":"M2"},"connectcampaigns":{"name":"ConnectCampaigns"},"redshiftserverless":{"prefix":"redshift-serverless","name":"RedshiftServerless"},"rolesanywhere":{"name":"RolesAnywhere"},"licensemanagerusersubscriptions":{"prefix":"license-manager-user-subscriptions","name":"LicenseManagerUserSubscriptions"},"backupstorage":{"name":"BackupStorage"},"privatenetworks":{"name":"PrivateNetworks"},"supportapp":{"prefix":"support-app","name":"SupportApp"},"controltower":{"name":"ControlTower"},"iotfleetwise":{"name":"IoTFleetWise"},"migrationhuborchestrator":{"name":"MigrationHubOrchestrator"},"connectcases":{"name":"ConnectCases"},"resourceexplorer2":{"prefix":"resource-explorer-2","name":"ResourceExplorer2"},"scheduler":{"name":"Scheduler"},"chimesdkvoice":{"prefix":"chime-sdk-voice","name":"ChimeSDKVoice"},"iotroborunner":{"prefix":"iot-roborunner","name":"IoTRoboRunner"},"ssmsap":{"prefix":"ssm-sap","name":"SsmSap"},"oam":{"name":"OAM"},"arczonalshift":{"prefix":"arc-zonal-shift","name":"ARCZonalShift"},"omics":{"name":"Omics"},"opensearchserverless":{"name":"OpenSearchServerless"},"securitylake":{"name":"SecurityLake"},"simspaceweaver":{"name":"SimSpaceWeaver"},"docdbelastic":{"prefix":"docdb-elastic","name":"DocDBElastic"},"sagemakergeospatial":{"prefix":"sagemaker-geospatial","name":"SageMakerGeospatial"},"codecatalyst":{"name":"CodeCatalyst"},"pipes":{"name":"Pipes"},"sagemakermetrics":{"prefix":"sagemaker-metrics","name":"SageMakerMetrics"},"kinesisvideowebrtcstorage":{"prefix":"kinesis-video-webrtc-storage","name":"KinesisVideoWebRTCStorage"},"licensemanagerlinuxsubscriptions":{"prefix":"license-manager-linux-subscriptions","name":"LicenseManagerLinuxSubscriptions"},"kendraranking":{"prefix":"kendra-ranking","name":"KendraRanking"},"cleanrooms":{"name":"CleanRooms"}};
 
 /***/ }),
 
@@ -17303,7 +17980,7 @@ function Api(api, options) {
     property(this, 'documentation', api.documentation);
     property(this, 'documentationUrl', api.documentationUrl);
   }
-  property(this, 'errorCodeMapping', api.awsQueryCompatible);
+  property(this, 'awsQueryCompatible', api.metadata.awsQueryCompatible);
 }
 
 /**
@@ -19485,18 +20162,32 @@ var AWS = __webpack_require__(395);
 var os = __webpack_require__(87);
 var path = __webpack_require__(622);
 
-function parseFile(filename, isConfig) {
-    var content = AWS.util.ini.parse(AWS.util.readFileSync(filename));
-    var tmpContent = {};
-    Object.keys(content).forEach(function(profileName) {
-      var profileContent = content[profileName];
-      profileName = isConfig ? profileName.replace(/^profile\s/, '') : profileName;
-      Object.defineProperty(tmpContent, profileName, {
-        value: profileContent,
-        enumerable: true
-      });
+function parseFile(filename) {
+  return AWS.util.ini.parse(AWS.util.readFileSync(filename));
+}
+
+function getProfiles(fileContent) {
+  var tmpContent = {};
+  Object.keys(fileContent).forEach(function(sectionName) {
+    if (/^sso-session\s/.test(sectionName)) return;
+    Object.defineProperty(tmpContent, sectionName.replace(/^profile\s/, ''), {
+      value: fileContent[sectionName],
+      enumerable: true
     });
-    return tmpContent;
+  });
+  return tmpContent;
+}
+
+function getSsoSessions(fileContent) {
+  var tmpContent = {};
+  Object.keys(fileContent).forEach(function(sectionName) {
+    if (!/^sso-session\s/.test(sectionName)) return;
+    Object.defineProperty(tmpContent, sectionName.replace(/^sso-session\s/, ''), {
+      value: fileContent[sectionName],
+      enumerable: true
+    });
+  });
+  return tmpContent;
 }
 
 /**
@@ -19511,41 +20202,66 @@ function parseFile(filename, isConfig) {
 AWS.IniLoader = AWS.util.inherit({
   constructor: function IniLoader() {
     this.resolvedProfiles = {};
+    this.resolvedSsoSessions = {};
   },
 
   /** Remove all cached files. Used after config files are updated. */
   clearCachedFiles: function clearCachedFiles() {
     this.resolvedProfiles = {};
+    this.resolvedSsoSessions = {};
   },
 
-/**
- * Load configurations from config/credentials files and cache them
- * for later use. If no file is specified it will try to load default
- * files.
- * @param options [map] information describing the file
- * @option options filename [String] ('~/.aws/credentials' or defined by
- *   AWS_SHARED_CREDENTIALS_FILE process env var or '~/.aws/config' if
- *   isConfig is set to true)
- *   path to the file to be read.
- * @option options isConfig [Boolean] (false) True to read config file.
- * @return [map<String,String>] object containing contents from file in key-value
- *   pairs.
- */
+  /**
+   * Load configurations from config/credentials files and cache them
+   * for later use. If no file is specified it will try to load default files.
+   *
+   * @param options [map] information describing the file
+   * @option options filename [String] ('~/.aws/credentials' or defined by
+   *   AWS_SHARED_CREDENTIALS_FILE process env var or '~/.aws/config' if
+   *   isConfig is set to true)
+   *   path to the file to be read.
+   * @option options isConfig [Boolean] (false) True to read config file.
+   * @return [map<String,String>] object containing contents from file in key-value
+   *   pairs.
+   */
   loadFrom: function loadFrom(options) {
     options = options || {};
     var isConfig = options.isConfig === true;
     var filename = options.filename || this.getDefaultFilePath(isConfig);
     if (!this.resolvedProfiles[filename]) {
-      var fileContent = this.parseFile(filename, isConfig);
-      Object.defineProperty(this.resolvedProfiles, filename, { value: fileContent });
+      var fileContent = parseFile(filename);
+      if (isConfig) {
+        Object.defineProperty(this.resolvedProfiles, filename, {
+          value: getProfiles(fileContent)
+        });
+      } else {
+        Object.defineProperty(this.resolvedProfiles, filename, { value: fileContent });
+      }
     }
     return this.resolvedProfiles[filename];
   },
 
   /**
-   * @api private
+   * Load sso sessions from config/credentials files and cache them
+   * for later use. If no file is specified it will try to load default file.
+   *
+   * @param options [map] information describing the file
+   * @option options filename [String] ('~/.aws/config' or defined by
+   *   AWS_CONFIG_FILE process env var)
+   * @return [map<String,String>] object containing contents from file in key-value
+   *   pairs.
    */
-  parseFile: parseFile,
+  loadSsoSessionsFrom: function loadSsoSessionsFrom(options) {
+    options = options || {};
+    var filename = options.filename || this.getDefaultFilePath(true);
+    if (!this.resolvedSsoSessions[filename]) {
+      var fileContent = parseFile(filename);
+      Object.defineProperty(this.resolvedSsoSessions, filename, {
+        value: getSsoSessions(fileContent)
+      });
+    }
+    return this.resolvedSsoSessions[filename];
+  },
 
   /**
    * @api private
@@ -19584,8 +20300,7 @@ AWS.IniLoader = AWS.util.inherit({
 var IniLoader = AWS.IniLoader;
 
 module.exports = {
-  IniLoader: IniLoader,
-  parseFile: parseFile,
+  IniLoader: IniLoader
 };
 
 
@@ -19938,6 +20653,7 @@ AWS.Signers.RequestSigner.getVersion = function getVersion(version) {
     case 'v4': return AWS.Signers.V4;
     case 's3': return AWS.Signers.S3;
     case 'v3https': return AWS.Signers.V3Https;
+    case 'bearer': return AWS.Signers.Bearer;
   }
   throw new Error('Unknown signing version ' + version);
 };
@@ -19948,6 +20664,7 @@ __webpack_require__(566);
 __webpack_require__(754);
 __webpack_require__(616);
 __webpack_require__(951);
+__webpack_require__(143);
 
 
 /***/ }),
@@ -20408,6 +21125,258 @@ function rng() {
   })();
 
 }).call(this);
+
+
+/***/ }),
+
+/***/ 858:
+/***/ (function(__unusedmodule, __unusedexports, __webpack_require__) {
+
+var AWS = __webpack_require__(395);
+var crypto = __webpack_require__(417);
+var fs = __webpack_require__(747);
+var path = __webpack_require__(622);
+var iniLoader = AWS.util.iniLoader;
+
+// Tracking refresh attempt to ensure refresh is not attempted more than once every 30 seconds.
+var lastRefreshAttemptTime = 0;
+
+/**
+ * Throws error is key is not present in token object.
+ *
+ * @param token [Object] Object to be validated.
+ * @param key [String] The key to be validated on the object.
+ */
+var validateTokenKey = function validateTokenKey(token, key) {
+  if (!token[key]) {
+    throw AWS.util.error(
+      new Error('Key "' + key + '" not present in SSO Token'),
+      { code: 'SSOTokenProviderFailure' }
+    );
+  }
+};
+
+/**
+ * Calls callback function with or without error based on provided times in case
+ * of unsuccessful refresh.
+ *
+ * @param currentTime [number] current time in milliseconds since ECMAScript epoch.
+ * @param tokenExpireTime [number] token expire time in milliseconds since ECMAScript epoch.
+ * @param callback [Function] Callback to call in case of error.
+ */
+var refreshUnsuccessful = function refreshUnsuccessful(
+  currentTime,
+  tokenExpireTime,
+  callback
+) {
+  if (tokenExpireTime > currentTime) {
+    // Cached token is still valid, return.
+    callback(null);
+  } else {
+    // Token invalid, throw error requesting user to sso login.
+    throw AWS.util.error(
+      new Error('SSO Token refresh failed. Please log in using "aws sso login"'),
+      { code: 'SSOTokenProviderFailure' }
+    );
+  }
+};
+
+/**
+ * Represents token loaded from disk derived from the AWS SSO device grant authorication flow.
+ *
+ * ## Using SSO Token Provider
+ *
+ * This provider is checked by default in the Node.js environment in TokenProviderChain.
+ * To use the SSO Token Provider, simply add your SSO Start URL and Region to the
+ * ~/.aws/config file in the following format:
+ *
+ *     [default]
+ *     sso_start_url = https://d-abc123.awsapps.com/start
+ *     sso_region = us-east-1
+ *
+ * ## Using custom profiles
+ *
+ * The SDK supports loading token for separate profiles. This can be done in two ways:
+ *
+ * 1. Set the `AWS_PROFILE` environment variable in your process prior to loading the SDK.
+ * 2. Directly load the AWS.SSOTokenProvider:
+ *
+ * ```javascript
+ * var ssoTokenProvider = new AWS.SSOTokenProvider({profile: 'myprofile'});
+ * ```
+ *
+ * @!macro nobrowser
+ */
+AWS.SSOTokenProvider = AWS.util.inherit(AWS.Token, {
+  /**
+   * Expiry window of five minutes.
+   */
+  expiryWindow: 5 * 60,
+
+  /**
+   * Creates a new token object from cached access token.
+   *
+   * @param options [map] a set of options
+   * @option options profile [String] (AWS_PROFILE env var or 'default')
+   *   the name of the profile to load.
+   * @option options callback [Function] (err) Token is eagerly loaded
+   *   by the constructor. When the callback is called with no error, the
+   *   token has been loaded successfully.
+   */
+  constructor: function SSOTokenProvider(options) {
+    AWS.Token.call(this);
+
+    options = options || {};
+
+    this.expired = true;
+    this.profile = options.profile || process.env.AWS_PROFILE || AWS.util.defaultProfile;
+    this.get(options.callback || AWS.util.fn.noop);
+  },
+
+  /**
+   * Reads sso_start_url from provided profile, and reads token from
+   * ~/.aws/sso/cache/<sha1-of-utf8-encoded-value-from-sso_start_url>.json
+   *
+   * Throws an error if required fields token and expiresAt are missing.
+   * Throws an error if token has expired and metadata to perform refresh is
+   * not available.
+   * Attempts to refresh the token if it's within 5 minutes before expiry time.
+   *
+   * @api private
+   */
+  load: function load(callback) {
+    var self = this;
+    var profiles = iniLoader.loadFrom({ isConfig: true });
+    var profile = profiles[this.profile] || {};
+
+    if (Object.keys(profile).length === 0) {
+      throw AWS.util.error(
+        new Error('Profile "' + this.profile + '" not found'),
+        { code: 'SSOTokenProviderFailure' }
+      );
+    } else if (!profile['sso_session']) {
+      throw AWS.util.error(
+        new Error('Profile "' + profileName + '" is missing required property "sso_session".'),
+        { code: 'SSOTokenProviderFailure' }
+      );
+    }
+
+    var ssoSessionName = profile['sso_session'];
+    var ssoSessions = iniLoader.loadSsoSessionsFrom();
+    var ssoSession = ssoSessions[ssoSessionName];
+
+    if (!ssoSession) {
+      throw AWS.util.error(
+        new Error('Sso session "' + ssoSessionName + '" not found'),
+        { code: 'SSOTokenProviderFailure' }
+      );
+    } else if (!ssoSession['sso_start_url']) {
+      throw AWS.util.error(
+        new Error('Sso session "' + profileName + '" is missing required property "sso_start_url".'),
+        { code: 'SSOTokenProviderFailure' }
+      );
+    } else if (!ssoSession['sso_region']) {
+      throw AWS.util.error(
+        new Error('Sso session "' + profileName + '" is missing required property "sso_region".'),
+        { code: 'SSOTokenProviderFailure' }
+      );
+    }
+
+    var hasher = crypto.createHash('sha1');
+    var fileName = hasher.update(ssoSessionName).digest('hex') + '.json';
+    var cachePath = path.join(iniLoader.getHomeDir(), '.aws', 'sso', 'cache', fileName);
+    var tokenFromCache = JSON.parse(fs.readFileSync(cachePath));
+
+    if (!tokenFromCache) {
+      throw AWS.util.error(
+        new Error('Cached token not found. Please log in using "aws sso login"'
+          + ' for profile "' + this.profile + '".'),
+        { code: 'SSOTokenProviderFailure' }
+      );
+    }
+
+    validateTokenKey(tokenFromCache, 'accessToken');
+    validateTokenKey(tokenFromCache, 'expiresAt');
+
+    var currentTime = AWS.util.date.getDate().getTime();
+    var adjustedTime = new Date(currentTime + this.expiryWindow * 1000);
+    var tokenExpireTime = new Date(tokenFromCache['expiresAt']);
+
+    if (tokenExpireTime > adjustedTime) {
+      // Token is valid and not expired.
+      self.token = tokenFromCache.accessToken;
+      self.expireTime = tokenExpireTime;
+      self.expired = false;
+      callback(null);
+      return;
+    }
+
+    // Skip new refresh, if last refresh was done within 30 seconds.
+    if (currentTime - lastRefreshAttemptTime < 30 * 1000) {
+      refreshUnsuccessful(currentTime, tokenExpireTime, callback);
+      return;
+    }
+
+    // Token is in expiry window, refresh from SSOOIDC.createToken() call.
+    validateTokenKey(tokenFromCache, 'clientId');
+    validateTokenKey(tokenFromCache, 'clientSecret');
+    validateTokenKey(tokenFromCache, 'refreshToken');
+
+    if (!self.service || self.service.config.region !== ssoSession.sso_region) {
+      self.service = new AWS.SSOOIDC({ region: ssoSession.sso_region });
+    }
+
+    var params = {
+      clientId: tokenFromCache.clientId,
+      clientSecret: tokenFromCache.clientSecret,
+      refreshToken: tokenFromCache.refreshToken,
+      grantType: 'refresh_token',
+    };
+
+    lastRefreshAttemptTime = AWS.util.date.getDate().getTime();
+    self.service.createToken(params, function(err, data) {
+      if (err || !data) {
+        refreshUnsuccessful(currentTime, tokenExpireTime, callback);
+      } else {
+        try {
+          validateTokenKey(data, 'accessToken');
+          validateTokenKey(data, 'expiresIn');
+          self.expired = false;
+          self.token = data.accessToken;
+          self.expireTime = new Date(Date.now() + data.expiresIn * 1000);
+          callback(null);
+
+          try {
+            // Write updated token data to disk.
+            tokenFromCache.accessToken = data.accessToken;
+            tokenFromCache.expiresAt = self.expireTime.toISOString();
+            tokenFromCache.refreshToken = data.refreshToken;
+            fs.writeFileSync(cachePath, JSON.stringify(tokenFromCache, null, 2));
+          } catch (error) {
+            // Swallow error if unable to write token to file.
+          }
+        } catch (error) {
+          refreshUnsuccessful(currentTime, tokenExpireTime, callback);
+        }
+      }
+    });
+  },
+
+  /**
+   * Loads the cached access token from disk.
+   *
+   * @callback callback function(err)
+   *   Called after the AWS SSO process has been executed. When this
+   *   callback is called with no error, it means that the token information
+   *   has been loaded into the object (as the `token` property).
+   *   @param err [Error] if an error occurred, this value will be filled.
+   * @see get
+   */
+  refresh: function refresh(callback) {
+    iniLoader.clearCachedFiles();
+    this.coalesceRefresh(callback || AWS.util.fn.callback);
+  },
+});
 
 
 /***/ }),
