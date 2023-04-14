@@ -1,6 +1,6 @@
 {
   "name": "opsworks-deploy-action",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Opsworks deploy action",
   "main": "lib/main.js",
